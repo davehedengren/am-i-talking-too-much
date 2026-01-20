@@ -105,7 +105,7 @@ def init_session_state():
     if 'audio_devices' not in st.session_state:
         st.session_state.audio_devices = get_audio_devices()
     if 'transcription_enabled' not in st.session_state:
-        st.session_state.transcription_enabled = True
+        st.session_state.transcription_enabled = False  # Off by default for fully local operation
 
 
 def render_api_setup():
