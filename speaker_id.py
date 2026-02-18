@@ -47,12 +47,12 @@ class SpeakerEmbedder:
         self.inference = Inference(self.model, window="whole", device=self.device)
 
     @staticmethod
-    def _select_device() -> str:
+    def _select_device() -> torch.device:
         if torch.backends.mps.is_available():
-            return "mps"
+            return torch.device("mps")
         if torch.cuda.is_available():
-            return "cuda"
-        return "cpu"
+            return torch.device("cuda")
+        return torch.device("cpu")
 
     def embedding_from_audio(self, audio_data: np.ndarray, sample_rate: int) -> np.ndarray:
         waveform = torch.tensor(audio_data, dtype=torch.float32).to(self.device)
