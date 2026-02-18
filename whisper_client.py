@@ -1,97 +1,79 @@
-"""OpenAI Whisper API client for transcription."""
+"""Local Whisper client using standard openai-whisper."""
 
-from openai import OpenAI
-from typing import Optional
+import whisper
 import os
+import logging
+import torch
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class WhisperClient:
-    """Client for OpenAI Whisper transcription API."""
+    """Client for local Whisper transcription."""
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, model_size: str = "base.en", device: str | None = None, compute_type: str = "int8"):
         """
-        Initialize the Whisper client.
+        Initialize the local Whisper model.
 
         Args:
-            api_key: OpenAI API key. If not provided, uses OPENAI_API_KEY env var.
+            model_size: Size of the model (tiny, base, small, medium, large)
+            device: "cpu", "cuda", or "mps". None to auto-detect.
+            compute_type: Ignored for standard whisper (handled internally/dtype)
         """
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        if not self.api_key:
-            raise ValueError("OpenAI API key required. Set OPENAI_API_KEY or pass api_key.")
+        # Auto-detect device only when not explicitly set
+        if device is None:
+            if torch.backends.mps.is_available():
+                device = "mps"
+                logger.info("MPS (Metal) detected. Using GPU acceleration.")
+            elif torch.cuda.is_available():
+                device = "cuda"
+                logger.info("CUDA detected. Using GPU acceleration.")
+            else:
+                device = "cpu"
 
-        self.client = OpenAI(api_key=self.api_key)
+        self.device = device
+        logger.info(f"Loading Whisper model: {model_size} on {self.device}...")
 
-    def transcribe(self, audio_filepath: str, language: str = "en") -> dict:
+        try:
+            self.model = whisper.load_model(model_size, device=self.device)
+            logger.info("Whisper model loaded successfully.")
+        except Exception:
+            logger.error(f"Failed to load Whisper model on {self.device}")
+            raise
+
+    def transcribe(self, audio_filepath: str) -> dict:
         """
-        Transcribe audio file using Whisper API.
+        Transcribe audio file using local Whisper model.
 
-        Args:
+       Args:
             audio_filepath: Path to the audio file (WAV, MP3, etc.)
-            language: Language code (default: "en" for English)
 
         Returns:
-            Dictionary with transcription result:
-            {
-                "text": str,          # Full transcription
-                "segments": list,     # Word/segment level timestamps (if available)
-                "success": bool,
-                "error": str or None
-            }
+            Dictionary with transcription result
         """
         try:
-            with open(audio_filepath, "rb") as audio_file:
-                response = self.client.audio.transcriptions.create(
-                    model="whisper-1",
-                    file=audio_file,
-                    language=language,
-                    response_format="verbose_json",
-                    timestamp_granularities=["segment"]
-                )
-
+            # Transcribe
+            result = self.model.transcribe(
+                audio_filepath,
+                fp16=False # consistent for CPU/MPS compatibility
+            )
+            
+            text = result.get("text", "").strip()
+            segments = result.get("segments", [])
+            
             return {
-                "text": response.text,
-                "segments": response.segments if hasattr(response, 'segments') else [],
+                "text": text,
+                "segments": segments,
                 "success": True,
                 "error": None
             }
 
         except Exception as e:
+            logger.error(f"Transcription error: {e}")
             return {
                 "text": "",
                 "segments": [],
                 "success": False,
                 "error": str(e)
             }
-
-    def transcribe_simple(self, audio_filepath: str, language: str = "en") -> str:
-        """
-        Simple transcription that returns just the text.
-
-        Args:
-            audio_filepath: Path to the audio file
-            language: Language code
-
-        Returns:
-            Transcription text, or empty string on error
-        """
-        result = self.transcribe(audio_filepath, language)
-        return result["text"]
-
-
-def test_api_key(api_key: str) -> tuple[bool, str]:
-    """
-    Test if an OpenAI API key is valid.
-
-    Args:
-        api_key: OpenAI API key to test
-
-    Returns:
-        Tuple of (is_valid, message)
-    """
-    try:
-        client = OpenAI(api_key=api_key)
-        # Just list models to verify the key works
-        client.models.list()
-        return True, "API key is valid"
-    except Exception as e:
-        return False, f"Invalid API key: {str(e)}"
