@@ -19,10 +19,22 @@ class SpeakerEmbeddingConfig:
 class SpeakerEmbedder:
     """Generate speaker embeddings from audio using a local pyannote model."""
 
+    MODEL_URL = "https://huggingface.co/pyannote/embedding"
+
     def __init__(self, config: SpeakerEmbeddingConfig, auth_token: Optional[str] = None):
         self.config = config
         self.device = self._select_device()
-        self.model = Model.from_pretrained(config.model_id, use_auth_token=auth_token)
+        try:
+            self.model = Model.from_pretrained(config.model_id, token=auth_token)
+        except Exception as e:
+            err = str(e)
+            if "401" in err or "Unauthorized" in err:
+                raise RuntimeError(
+                    f"HuggingFace returned 401 Unauthorized. "
+                    f"Please accept the model license at {self.MODEL_URL} "
+                    f"and verify your HUGGING_FACE_API_KEY is valid."
+                ) from e
+            raise
         self.model.to(self.device)
         self.inference = Inference(self.model, window="whole", device=self.device)
 

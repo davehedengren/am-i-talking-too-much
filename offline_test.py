@@ -56,7 +56,7 @@ def main() -> None:
     audio, sample_rate = load_audio(args.audio_path)
 
     print("Running diarization...")
-    pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=token)
+    pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", token=token)
     diarization = pipeline(args.audio_path)
 
     speaker_durations: Dict[str, float] = defaultdict(float)

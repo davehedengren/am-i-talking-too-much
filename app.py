@@ -267,7 +267,7 @@ def render_calibration():
                                 save_embedding(embedding, str(SPEAKER_EMBEDDING_PATH))
                             except Exception as e:
                                 st.session_state.speaker_embedding = None
-                                st.session_state.speaker_embedding_error = f"Speaker embedding failed: {str(e)[:80]}"
+                                st.session_state.speaker_embedding_error = f"Speaker embedding failed: {e}"
                         st.session_state.calibration_audio = None
                         st.rerun()
 
@@ -408,7 +408,7 @@ def render_tracking():
                             match_method = "embedding"
                             used_embedding = True
                     except Exception as e:
-                        st.session_state.speaker_embedding_error = f"Speaker embedding error: {str(e)[:80]}"
+                        st.session_state.speaker_embedding_error = f"Speaker embedding error: {e}"
                         st.session_state.speaker_embedder = None
 
                 if not used_embedding:
