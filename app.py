@@ -106,7 +106,7 @@ def init_session_state():
     if 'speaker_use_embedding' not in st.session_state:
         st.session_state.speaker_use_embedding = st.session_state.speaker_embedding is not None
     if 'speaker_similarity_threshold' not in st.session_state:
-        st.session_state.speaker_similarity_threshold = 0.65
+        st.session_state.speaker_similarity_threshold = 0.45
     if 'debug_logs' not in st.session_state:
         st.session_state.debug_logs = []
     if 'voice_profile' not in st.session_state:
@@ -259,7 +259,7 @@ def render_calibration():
                                         config=config,
                                         auth_token=HUGGING_FACE_API_KEY
                                     )
-                                embedding = st.session_state.speaker_embedder.embedding_from_audio(
+                                embedding = st.session_state.speaker_embedder.enroll_from_audio(
                                     st.session_state.calibration_audio,
                                     SAMPLE_RATE
                                 )

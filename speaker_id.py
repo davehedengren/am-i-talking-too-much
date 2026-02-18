@@ -13,7 +13,7 @@ from pyannote.audio import Model, Inference
 @dataclass
 class SpeakerEmbeddingConfig:
     model_id: str = "pyannote/embedding"
-    similarity_threshold: float = 0.65
+    similarity_threshold: float = 0.45
 
 
 class SpeakerEmbedder:
@@ -60,6 +60,27 @@ class SpeakerEmbedder:
             waveform = waveform.unsqueeze(0)
         embedding = self.inference({"waveform": waveform, "sample_rate": sample_rate})
         return np.asarray(embedding, dtype=np.float32)
+
+    def enroll_from_audio(self, audio_data: np.ndarray, sample_rate: int,
+                          chunk_duration: float = 2.0) -> np.ndarray:
+        """Create an enrollment embedding by averaging chunk embeddings.
+
+        This produces an embedding that is comparable to the short chunks
+        used during real-time tracking, unlike a single embedding from
+        the full recording which lives in a different region of the
+        embedding space.
+        """
+        chunk_size = int(chunk_duration * sample_rate)
+        embeddings = []
+        for start in range(0, len(audio_data) - chunk_size + 1, chunk_size):
+            chunk = audio_data[start:start + chunk_size]
+            embeddings.append(self.embedding_from_audio(chunk, sample_rate))
+        if not embeddings:
+            # Audio shorter than one chunk — fall back to full recording
+            return self.embedding_from_audio(audio_data, sample_rate)
+        avg = np.mean(embeddings, axis=0)
+        avg = avg / np.linalg.norm(avg)  # L2-normalize
+        return avg
 
 
 def save_embedding(embedding: np.ndarray, filepath: str) -> None:
