@@ -34,6 +34,14 @@ class SpeakerEmbedder:
                     f"Please accept the model license at {self.MODEL_URL} "
                     f"and verify your HUGGING_FACE_API_KEY is valid."
                 ) from e
+            if "403" in err or "Forbidden" in err or "gated" in err.lower():
+                raise RuntimeError(
+                    f"HuggingFace returned 403 Forbidden. "
+                    f"Your token may lack 'read' scope, or was created before you "
+                    f"accepted the license. Try creating a new token with 'read' "
+                    f"permission at https://huggingface.co/settings/tokens after "
+                    f"accepting the license at {self.MODEL_URL}"
+                ) from e
             raise
         self.model.to(self.device)
         self.inference = Inference(self.model, window="whole", device=self.device)

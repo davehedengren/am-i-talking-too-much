@@ -368,7 +368,7 @@ def render_tracking():
 
         # Process audio in chunks
         chunk_duration = 2.0
-        SPEECH_THRESHOLD = 0.005  # Lowered threshold for speech detection
+        SPEECH_THRESHOLD = 0.0005  # Low threshold to support Bluetooth mics
 
         with st.spinner(""):
             audio = record_audio(chunk_duration, SAMPLE_RATE, st.session_state.selected_device)

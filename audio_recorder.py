@@ -42,12 +42,15 @@ def get_audio_level(duration: float = 0.1, device: Optional[int] = None) -> floa
     """
     Get current audio input level (for level meter).
 
+    Uses a dB scale so the meter works across devices with very different
+    gain levels (e.g. built-in mic vs. Bluetooth earbuds).
+
     Args:
         duration: Sample duration in seconds
         device: Audio input device ID
 
     Returns:
-        RMS level (0.0 to 1.0 range, clamped)
+        Level mapped to 0.0–1.0 using dB scale
     """
     try:
         audio = sd.rec(
@@ -62,15 +65,25 @@ def get_audio_level(duration: float = 0.1, device: Optional[int] = None) -> floa
         if len(audio_flat) == 0:
             return 0.0
         rms = calculate_rms(audio_flat)
-        # Handle NaN
-        if np.isnan(rms):
+        if np.isnan(rms) or rms <= 0:
             return 0.0
-        # Scale up significantly for visual feedback (typical speech RMS is 0.01-0.05)
-        # Use 50x multiplier so normal speech shows ~50-100%
-        return min(max(rms * 50, 0.0), 1.0)
+        return rms_to_level(rms)
     except Exception:
         logger.debug("Failed to read audio level", exc_info=True)
         return 0.0
+
+
+# dB range for level meter: silence floor to loud speech
+_DB_FLOOR = -80.0
+_DB_CEIL = -20.0
+
+
+def rms_to_level(rms: float) -> float:
+    """Map an RMS amplitude to a 0.0–1.0 level using a dB scale."""
+    if rms <= 0:
+        return 0.0
+    db = 20.0 * np.log10(rms)
+    return float(np.clip((db - _DB_FLOOR) / (_DB_CEIL - _DB_FLOOR), 0.0, 1.0))
 
 
 def set_default_device(device_id: int) -> None:
