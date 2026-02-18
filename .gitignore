@@ -40,5 +40,15 @@ build/
 # Streamlit
 .streamlit/
 
+# Pytest
+.pytest_cache/
+
+# Test audio fixtures (downloaded from LibriVox, ~3MB)
+test/fixtures/*.mp3
+test/fixtures/*.wav
+
+# Speaker embedding (contains personal voice data)
+speaker_embedding.json
+
 # Old Swift build artifacts
 .build/

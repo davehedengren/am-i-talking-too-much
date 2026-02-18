@@ -14,22 +14,32 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from audio_recorder import (
-    record_audio, record_audio_continuous, save_audio, save_to_temp_file,
+    record_audio, save_audio, save_to_temp_file,
     calculate_rms, SAMPLE_RATE, get_audio_devices, get_audio_level
 )
 from voice_matcher import (
     create_voice_profile, match_voice, VoiceProfile,
     save_profile, load_profile
 )
-from whisper_client import WhisperClient, test_api_key
+from whisper_client import WhisperClient
+from speaker_id import (
+    SpeakerEmbeddingConfig,
+    SpeakerEmbedder,
+    save_embedding,
+    load_embedding,
+    match_embedding,
+)
 
 # Load .env file from project directory
 APP_DIR = Path(__file__).parent
 ENV_PATH = APP_DIR / ".env"
 PROFILE_PATH = APP_DIR / "voice_profile.json"
+SPEAKER_EMBEDDING_PATH = APP_DIR / "speaker_embedding.json"
 
 if ENV_PATH.exists():
     load_dotenv(ENV_PATH)
+
+HUGGING_FACE_API_KEY = os.getenv("HUGGING_FACE_API_KEY")
 
 
 # Page config
@@ -73,10 +83,30 @@ st.markdown("""
 
 def init_session_state():
     """Initialize session state variables."""
-    if 'api_key' not in st.session_state:
-        # Try to load from environment first
-        env_key = os.getenv("OPENAI_API_KEY")
-        st.session_state.api_key = env_key if env_key else None
+    if 'whisper_client' not in st.session_state:
+        st.session_state.whisper_client = None
+    if 'speaker_embedder' not in st.session_state:
+        st.session_state.speaker_embedder = None
+    if 'speaker_embedding' not in st.session_state:
+        if SPEAKER_EMBEDDING_PATH.exists():
+            try:
+                st.session_state.speaker_embedding = load_embedding(str(SPEAKER_EMBEDDING_PATH))
+            except Exception as e:
+                print(f"Failed to load speaker embedding: {e}")
+                st.session_state.speaker_embedding = None
+                st.session_state.speaker_embedding_error = "Failed to load speaker embedding."
+                try:
+                    SPEAKER_EMBEDDING_PATH.unlink()
+                except Exception:
+                    pass
+        else:
+            st.session_state.speaker_embedding = None
+    if 'speaker_embedding_error' not in st.session_state:
+        st.session_state.speaker_embedding_error = None
+    if 'speaker_use_embedding' not in st.session_state:
+        st.session_state.speaker_use_embedding = st.session_state.speaker_embedding is not None
+    if 'speaker_similarity_threshold' not in st.session_state:
+        st.session_state.speaker_similarity_threshold = 0.65
     if 'debug_logs' not in st.session_state:
         st.session_state.debug_logs = []
     if 'voice_profile' not in st.session_state:
@@ -84,10 +114,20 @@ def init_session_state():
         if PROFILE_PATH.exists():
             try:
                 st.session_state.voice_profile = load_profile(str(PROFILE_PATH))
-            except:
+            except Exception as e:
+                # Profile is likely incompatible or corrupted
+                print(f"Failed to load profile: {e}")
                 st.session_state.voice_profile = None
+                st.session_state.profile_reset = True
+                try:
+                    PROFILE_PATH.unlink()
+                except Exception:
+                    pass
         else:
             st.session_state.voice_profile = None
+    
+    if 'profile_reset' not in st.session_state:
+        st.session_state.profile_reset = False
     if 'calibration_audio' not in st.session_state:
         st.session_state.calibration_audio = None
     if 'is_tracking' not in st.session_state:
@@ -108,81 +148,49 @@ def init_session_state():
         st.session_state.transcription_enabled = False  # Off by default for fully local operation
 
 
-def render_api_setup():
-    """Render API key setup screen."""
-    st.markdown('<p class="main-header">Am I Talking Too Much?</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Track your speaking time in conversations</p>', unsafe_allow_html=True)
 
-    st.markdown("### Step 1: Enter your OpenAI API key")
 
-    # Check if key exists in environment
-    env_key = os.getenv("OPENAI_API_KEY")
-    if env_key:
-        st.success("Found API key in .env file!")
-        if st.button("Use .env API Key", type="primary"):
-            with st.spinner("Validating API key..."):
-                is_valid, message = test_api_key(env_key)
-                if is_valid:
-                    st.session_state.api_key = env_key
-                    st.rerun()
-                else:
-                    st.error(message)
-        st.markdown("---")
-        st.markdown("Or enter a different key:")
+def _render_device_selector(selectbox_key: str) -> None:
+    """Render the audio device selection sidebar widgets."""
+    st.markdown("### Audio Input")
+    devices = st.session_state.audio_devices
+    device_names = [d['name'] for d in devices]
+    device_ids = [d['id'] for d in devices]
 
-    st.markdown("Your API key is used for Whisper transcription. It's stored only in this session.")
+    if device_names:
+        current_idx = 0
+        if st.session_state.selected_device in device_ids:
+            current_idx = device_ids.index(st.session_state.selected_device)
 
-    api_key = st.text_input(
-        "OpenAI API Key",
-        type="password",
-        placeholder="sk-...",
-        help="Get your API key from platform.openai.com"
-    )
+        selected_name = st.selectbox(
+            "Microphone",
+            device_names,
+            index=current_idx,
+            key=selectbox_key
+        )
+        selected_idx = device_names.index(selected_name)
+        st.session_state.selected_device = device_ids[selected_idx]
 
-    if st.button("Continue", type="primary", disabled=not api_key):
-        with st.spinner("Validating API key..."):
-            is_valid, message = test_api_key(api_key)
-            if is_valid:
-                st.session_state.api_key = api_key
-                st.rerun()
-            else:
-                st.error(message)
+    if st.button("🔄 Refresh Devices"):
+        st.session_state.audio_devices = get_audio_devices()
+        st.rerun()
 
 
 def render_calibration():
     """Render voice calibration screen."""
     # Sidebar for device selection
     with st.sidebar:
-        st.markdown("### Audio Input")
-        devices = st.session_state.audio_devices
-        device_names = [d['name'] for d in devices]
-        device_ids = [d['id'] for d in devices]
-
-        if device_names:
-            current_idx = 0
-            if st.session_state.selected_device in device_ids:
-                current_idx = device_ids.index(st.session_state.selected_device)
-
-            selected_name = st.selectbox(
-                "Microphone",
-                device_names,
-                index=current_idx,
-                key="calib_device_selector"
-            )
-            selected_idx = device_names.index(selected_name)
-            st.session_state.selected_device = device_ids[selected_idx]
-
-        if st.button("🔄 Refresh Devices"):
-            st.session_state.audio_devices = get_audio_devices()
-            st.rerun()
+        _render_device_selector("calib_device_selector")
 
     st.markdown('<p class="main-header">Voice Calibration</p>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Record a sample of your voice so we can identify you</p>', unsafe_allow_html=True)
 
-    # Live audio level indicator (always running)
+    # Audio level indicator (manual refresh to avoid rerun flicker)
     st.markdown("**Audio Level** - speak to verify your mic is working")
+    level_container = st.empty()
+    st.button("🔄 Refresh Level", key="calibration_refresh_level")
     level = get_audio_level(0.15, st.session_state.selected_device)
-    st.progress(level, text=f"Level: {level:.0%}")
+    level_container.progress(level, text=f"Level: {level:.0%}")
 
     st.markdown("""
     **Instructions:**
@@ -192,11 +200,21 @@ def render_calibration():
     4. Review and save your voice profile
     """)
 
+    if st.session_state.speaker_embedding_error:
+        st.warning(st.session_state.speaker_embedding_error)
+    if not HUGGING_FACE_API_KEY:
+        st.info("Set HUGGING_FACE_API_KEY to enable local speaker-ID embedding.")
+
     col1, col2, col3 = st.columns([1, 2, 1])
 
     with col2:
         if st.session_state.calibration_audio is None:
-            if st.button("🎤 Start Recording (10 seconds)", type="primary", use_container_width=True):
+            if st.button(
+                "🎤 Start Recording (10 seconds)",
+                type="primary",
+                use_container_width=True,
+                key="calibration_start_recording",
+            ):
                 with st.spinner("Recording for 10 seconds... Speak now!"):
                     # Record continuously to avoid gaps between chunks
                     st.session_state.calibration_audio = record_audio(
@@ -204,9 +222,7 @@ def render_calibration():
                     )
                     st.rerun()
             else:
-                # Auto-refresh to keep level meter live
-                time.sleep(0.3)
-                st.rerun()
+                pass
         else:
             st.success("Recording complete!")
 
@@ -217,12 +233,12 @@ def render_calibration():
             col_a, col_b = st.columns(2)
 
             with col_a:
-                if st.button("🔄 Re-record", use_container_width=True):
+                if st.button("🔄 Re-record", use_container_width=True, key="calibration_rerecord"):
                     st.session_state.calibration_audio = None
                     st.rerun()
 
             with col_b:
-                if st.button("✓ Save Profile", type="primary", use_container_width=True):
+                if st.button("✓ Save Profile", type="primary", use_container_width=True, key="calibration_save"):
                     with st.spinner("Creating voice profile..."):
                         profile = create_voice_profile(
                             st.session_state.calibration_audio,
@@ -231,8 +247,31 @@ def render_calibration():
                         st.session_state.voice_profile = profile
                         # Save to disk
                         save_profile(profile, str(PROFILE_PATH))
+                        # Create speaker embedding profile if token is available
+                        st.session_state.speaker_embedding_error = None
+                        if HUGGING_FACE_API_KEY:
+                            try:
+                                if st.session_state.speaker_embedder is None:
+                                    config = SpeakerEmbeddingConfig(
+                                        similarity_threshold=st.session_state.speaker_similarity_threshold
+                                    )
+                                    st.session_state.speaker_embedder = SpeakerEmbedder(
+                                        config=config,
+                                        auth_token=HUGGING_FACE_API_KEY
+                                    )
+                                embedding = st.session_state.speaker_embedder.embedding_from_audio(
+                                    st.session_state.calibration_audio,
+                                    SAMPLE_RATE
+                                )
+                                st.session_state.speaker_embedding = embedding
+                                save_embedding(embedding, str(SPEAKER_EMBEDDING_PATH))
+                            except Exception as e:
+                                st.session_state.speaker_embedding = None
+                                st.session_state.speaker_embedding_error = f"Speaker embedding failed: {str(e)[:80]}"
                         st.session_state.calibration_audio = None
                         st.rerun()
+
+    # No auto-refresh in calibration to avoid duplicate buttons / interrupted clicks.
 
 
 def render_tracking():
@@ -342,15 +381,44 @@ def render_tracking():
             log_entry = f"RMS: {rms:.4f} | Max: {audio_max:.4f}"
 
             if rms > SPEECH_THRESHOLD:  # Speech detected
-                # Match against profile
-                is_user, confidence = match_voice(
-                    audio,
-                    st.session_state.voice_profile,
-                    SAMPLE_RATE,
-                    threshold=0.5
-                )
+                # Match against profile (prefer speaker embedding if available)
+                is_user = False
+                confidence = 0.0
+                match_method = "gmm"
+                used_embedding = False
 
-                log_entry += f" | SPEECH | Match: {confidence:.2f} | IsYou: {is_user}"
+                if st.session_state.speaker_use_embedding and st.session_state.speaker_embedding is not None:
+                    try:
+                        if st.session_state.speaker_embedder is None and HUGGING_FACE_API_KEY:
+                            config = SpeakerEmbeddingConfig(
+                                similarity_threshold=st.session_state.speaker_similarity_threshold
+                            )
+                            st.session_state.speaker_embedder = SpeakerEmbedder(
+                                config=config,
+                                auth_token=HUGGING_FACE_API_KEY
+                            )
+                        if st.session_state.speaker_embedder is not None:
+                            is_user, confidence = match_embedding(
+                                audio,
+                                SAMPLE_RATE,
+                                st.session_state.speaker_embedder,
+                                st.session_state.speaker_embedding,
+                                threshold=st.session_state.speaker_similarity_threshold,
+                            )
+                            match_method = "embedding"
+                            used_embedding = True
+                    except Exception as e:
+                        st.session_state.speaker_embedding_error = f"Speaker embedding error: {str(e)[:80]}"
+                        st.session_state.speaker_embedder = None
+
+                if not used_embedding:
+                    is_user, confidence = match_voice(
+                        audio,
+                        st.session_state.voice_profile,
+                        SAMPLE_RATE
+                    )
+
+                log_entry += f" | SPEECH | {match_method}: {confidence:.2f} | IsYou: {is_user}"
 
                 st.session_state.total_time += chunk_duration
 
@@ -363,17 +431,22 @@ def render_tracking():
 
                 # Optional: transcribe (if enabled)
                 if st.session_state.transcription_enabled:
+                    temp_path = save_to_temp_file(audio, SAMPLE_RATE)
                     try:
-                        temp_path = save_to_temp_file(audio, SAMPLE_RATE)
-                        client = WhisperClient(st.session_state.api_key)
-                        result = client.transcribe(temp_path)
+                        # Initialize client if needed
+                        if st.session_state.whisper_client is None:
+                            st.session_state.whisper_client = WhisperClient(model_size="base.en")
+
+                        result = st.session_state.whisper_client.transcribe(temp_path)
+
                         if result["success"] and result["text"].strip():
                             speaker = "You" if is_user else "Other"
                             st.session_state.transcription.append(f"**{speaker}:** {result['text']}")
                             log_entry += f" | Text: {result['text'][:30]}..."
-                        os.unlink(temp_path)
                     except Exception as e:
                         log_entry += f" | Transcribe error: {str(e)[:30]}"
+                    finally:
+                        os.unlink(temp_path)
             else:
                 log_entry += " | (silence)"
 
@@ -392,29 +465,7 @@ def render_tracking():
 
     # Sidebar settings
     with st.sidebar:
-        st.markdown("### Audio Input")
-        devices = st.session_state.audio_devices
-        device_names = [d['name'] for d in devices]
-        device_ids = [d['id'] for d in devices]
-
-        if device_names:
-            # Find current selection index
-            current_idx = 0
-            if st.session_state.selected_device in device_ids:
-                current_idx = device_ids.index(st.session_state.selected_device)
-
-            selected_name = st.selectbox(
-                "Microphone",
-                device_names,
-                index=current_idx,
-                key="device_selector"
-            )
-            selected_idx = device_names.index(selected_name)
-            st.session_state.selected_device = device_ids[selected_idx]
-
-        if st.button("🔄 Refresh Devices"):
-            st.session_state.audio_devices = get_audio_devices()
-            st.rerun()
+        _render_device_selector("device_selector")
 
         st.divider()
         st.markdown("### Voice Profile")
@@ -422,15 +473,46 @@ def render_tracking():
         if PROFILE_PATH.exists():
             st.success("Saved profile loaded")
 
+        if st.session_state.speaker_embedding is not None:
+            st.success("Speaker embedding loaded")
+        else:
+            st.info("Speaker embedding not available")
+
+        if not HUGGING_FACE_API_KEY:
+            st.info("Set HUGGING_FACE_API_KEY in .env to enable embedding.")
+
+        if st.session_state.speaker_embedding_error:
+            st.warning(st.session_state.speaker_embedding_error)
+
+        st.session_state.speaker_use_embedding = st.toggle(
+            "Use speaker embedding",
+            value=st.session_state.speaker_use_embedding,
+            help="Uses a local speaker embedding model to decide if the voice is yours."
+        )
+
+        st.session_state.speaker_similarity_threshold = st.slider(
+            "Speaker match threshold",
+            min_value=0.4,
+            max_value=0.9,
+            value=float(st.session_state.speaker_similarity_threshold),
+            step=0.02
+        )
+
         if st.button("Re-calibrate Voice"):
             st.session_state.voice_profile = None
-            if PROFILE_PATH.exists():
-                PROFILE_PATH.unlink()  # Delete saved profile
+            try:
+                PROFILE_PATH.unlink(missing_ok=True)
+            except OSError:
+                pass
+            st.session_state.speaker_embedding = None
+            st.session_state.speaker_embedder = None
+            try:
+                SPEAKER_EMBEDDING_PATH.unlink(missing_ok=True)
+            except OSError:
+                pass
             st.rerun()
 
-        if st.button("Change API Key"):
-            st.session_state.api_key = None
-            st.rerun()
+
 
         st.divider()
         st.markdown("### Transcription")
@@ -440,9 +522,9 @@ def render_tracking():
             help="When enabled, sends audio to OpenAI Whisper for transcription. Disable for fully local operation."
         )
         if st.session_state.transcription_enabled:
-            st.caption("Audio sent to OpenAI Whisper")
+            st.caption("Using local Whisper model (CPU)")
         else:
-            st.caption("Fully local (no API calls)")
+            st.caption("Transcription disabled")
 
         st.divider()
         st.markdown("### Guide")
@@ -471,10 +553,12 @@ def main():
     """Main app logic."""
     init_session_state()
 
-    # Flow: API Key -> Calibration -> Tracking
-    if st.session_state.api_key is None:
-        render_api_setup()
-    elif st.session_state.voice_profile is None:
+    # Flow: Calibration -> Tracking
+    if st.session_state.voice_profile is None:
+        if st.session_state.profile_reset:
+            st.warning("⚠️ Your voice profile was from an older version and has been reset. Please re-calibrate.")
+            # Clear the flag after showing
+            st.session_state.profile_reset = False
         render_calibration()
     else:
         render_tracking()

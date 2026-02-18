@@ -3,38 +3,40 @@
 import numpy as np
 from scipy.fft import fft
 from scipy.signal import spectrogram
-from typing import Optional
+from scipy.special import expit
+from typing import Optional, Tuple
 import json
+from sklearn.mixture import GaussianMixture
 
 
 class VoiceProfile:
-    """Represents a voice profile with extracted features."""
+    """Represents a voice profile with GMM parameters."""
 
-    def __init__(self, mfcc_mean: np.ndarray, mfcc_std: np.ndarray,
-                 spectral_centroid: float, spectral_rolloff: float):
-        self.mfcc_mean = mfcc_mean
-        self.mfcc_std = mfcc_std
-        self.spectral_centroid = spectral_centroid
-        self.spectral_rolloff = spectral_rolloff
+    def __init__(self, gmm: GaussianMixture, threshold_score: float):
+        self.gmm = gmm
+        self.threshold_score = threshold_score
 
     def to_dict(self) -> dict:
         """Convert profile to dictionary for serialization."""
         return {
-            'mfcc_mean': self.mfcc_mean.tolist(),
-            'mfcc_std': self.mfcc_std.tolist(),
-            'spectral_centroid': self.spectral_centroid,
-            'spectral_rolloff': self.spectral_rolloff
+            'weights': self.gmm.weights_.tolist(),
+            'means': self.gmm.means_.tolist(),
+            'covariances': self.gmm.covariances_.tolist(),
+            'precisions_cholesky': self.gmm.precisions_cholesky_.tolist(),
+            'threshold_score': self.threshold_score
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> 'VoiceProfile':
         """Create profile from dictionary."""
-        return cls(
-            mfcc_mean=np.array(data['mfcc_mean']),
-            mfcc_std=np.array(data['mfcc_std']),
-            spectral_centroid=data['spectral_centroid'],
-            spectral_rolloff=data['spectral_rolloff']
-        )
+        gmm = GaussianMixture(n_components=len(data['weights']), covariance_type='diag')
+        gmm.weights_ = np.array(data['weights'])
+        gmm.means_ = np.array(data['means'])
+        gmm.covariances_ = np.array(data['covariances'])
+        gmm.precisions_cholesky_ = np.array(data['precisions_cholesky'])
+        # For diag, precisions is 1/covariances (guard against zero)
+        gmm.precisions_ = 1.0 / np.maximum(gmm.covariances_, 1e-10)
+        return cls(gmm=gmm, threshold_score=data.get('threshold_score', -20.0))
 
 
 def _hz_to_mel(hz: float) -> float:
@@ -112,7 +114,7 @@ def extract_mfcc(audio_data: np.ndarray, sample_rate: int = 16000,
     # Mel filterbank
     mel_filterbank = _create_mel_filterbank(26, frame_size, sample_rate)
     mel_spectrum = np.dot(power_spectrum, mel_filterbank.T)
-    mel_spectrum = np.where(mel_spectrum == 0, np.finfo(float).eps, mel_spectrum)
+    mel_spectrum = np.where(mel_spectrum == 0, 1e-10, mel_spectrum)
     mel_spectrum = np.log(mel_spectrum)
 
     # DCT to get MFCCs
@@ -166,7 +168,7 @@ def extract_spectral_features(audio_data: np.ndarray,
 def create_voice_profile(audio_data: np.ndarray,
                          sample_rate: int = 16000) -> VoiceProfile:
     """
-    Create a voice profile from audio samples.
+    Create a voice profile from audio samples using GMM.
 
     Args:
         audio_data: numpy array of audio samples (should be several seconds)
@@ -176,31 +178,46 @@ def create_voice_profile(audio_data: np.ndarray,
         VoiceProfile object
     """
     # Extract MFCC features
-    mfcc = extract_mfcc(audio_data, sample_rate)
-    mfcc_mean = np.mean(mfcc, axis=0)
-    mfcc_std = np.std(mfcc, axis=0)
+    # MFCCs are (num_frames, num_coefficients)
+    mfcc = extract_mfcc(audio_data, sample_rate, num_mfcc=20)
+    
+    # Train GMM with Diagonal Covariance
+    # 'diag' has far fewer parameters than 'full', preventing overfitting on short clips
+    # We want at least 20 frames per component to estimate mean/var reliably
+    n_frames = mfcc.shape[0]
+    max_components = n_frames // 20
+    n_components = min(16, max_components)
+    if n_components < 1:
+        n_components = 1
+        
+    gmm = GaussianMixture(n_components=n_components, covariance_type='diag', 
+                          random_state=42, n_init=3)
+    gmm.fit(mfcc)
+    
+    # Calculate baseline score (average log likelihood) on training data
+    scores = gmm.score_samples(mfcc)
+    avg_score = np.mean(scores)
+    std_score = np.std(scores)
 
-    # Extract spectral features
-    centroid, rolloff = extract_spectral_features(audio_data, sample_rate)
+    # Set threshold using standard deviation: short test chunks (2-3s) have
+    # higher variance than the training window, so a fixed margin is unreliable.
+    # Using 1.5 * std accommodates natural score variance while still
+    # rejecting genuinely different speakers.
+    threshold_score = avg_score - 1.5 * std_score
 
-    return VoiceProfile(
-        mfcc_mean=mfcc_mean,
-        mfcc_std=mfcc_std,
-        spectral_centroid=centroid,
-        spectral_rolloff=rolloff
-    )
+    return VoiceProfile(gmm=gmm, threshold_score=threshold_score)
 
 
 def match_voice(audio_segment: np.ndarray, profile: VoiceProfile,
-                sample_rate: int = 16000, threshold: float = 0.6) -> tuple[bool, float]:
+                sample_rate: int = 16000, threshold_confidence: float = 0.5) -> Tuple[bool, float]:
     """
-    Check if an audio segment matches a voice profile.
+    Check if an audio segment matches a voice profile using GMM log-likelihood.
 
     Args:
         audio_segment: numpy array of audio samples
         profile: VoiceProfile to match against
         sample_rate: Sample rate in Hz
-        threshold: Similarity threshold (0-1) for positive match
+        threshold_confidence: (Unused in GMM decision logic directly, but kept for interface compatibility)
 
     Returns:
         Tuple of (is_match, confidence_score)
@@ -211,40 +228,33 @@ def match_voice(audio_segment: np.ndarray, profile: VoiceProfile,
         return False, 0.0
 
     # Extract features from segment
-    mfcc = extract_mfcc(audio_segment, sample_rate)
-    segment_mfcc_mean = np.mean(mfcc, axis=0)
+    mfcc = extract_mfcc(audio_segment, sample_rate, num_mfcc=20)
+    
+    if mfcc.shape[0] < 5:
+        # Not enough frames to judge
+        return False, 0.0
 
-    centroid, rolloff = extract_spectral_features(audio_segment, sample_rate)
-
-    # Compare MFCC (using cosine similarity)
-    norm_profile = np.linalg.norm(profile.mfcc_mean)
-    norm_segment = np.linalg.norm(segment_mfcc_mean)
-
-    if norm_profile > 0 and norm_segment > 0:
-        mfcc_similarity = np.dot(profile.mfcc_mean, segment_mfcc_mean) / (norm_profile * norm_segment)
-    else:
-        mfcc_similarity = 0.0
-
-    # Compare spectral features (normalized difference)
-    if profile.spectral_centroid > 0:
-        centroid_diff = abs(centroid - profile.spectral_centroid) / profile.spectral_centroid
-        centroid_similarity = max(0, 1 - centroid_diff)
-    else:
-        centroid_similarity = 0.5
-
-    if profile.spectral_rolloff > 0:
-        rolloff_diff = abs(rolloff - profile.spectral_rolloff) / profile.spectral_rolloff
-        rolloff_similarity = max(0, 1 - rolloff_diff)
-    else:
-        rolloff_similarity = 0.5
-
-    # Combined similarity score (weighted average)
-    similarity = 0.6 * mfcc_similarity + 0.2 * centroid_similarity + 0.2 * rolloff_similarity
-
-    # Clamp to [0, 1]
-    similarity = float(np.clip(similarity, 0, 1))
-
-    return similarity >= threshold, similarity
+    # Compute log-likelihood of the segment under the GMM
+    scores = profile.gmm.score_samples(mfcc)
+    avg_score = np.mean(scores)
+    
+    # Distance from threshold
+    # if avg_score > profile.threshold_score, it's a match
+    # We want to map this to a 0-1 confidence
+    # Let's say:
+    #   score == threshold -> 0.5
+    #   score == threshold + 5 -> 0.9
+    #   score == threshold - 5 -> 0.1
+    
+    diff = avg_score - profile.threshold_score
+    
+    # Sigmoid function centered at 0 (which represents the threshold)
+    # Scale factor 0.5 means a difference of 2 units drives it significantly
+    confidence = float(expit(0.5 * diff))
+    
+    is_match = diff > 0
+    
+    return is_match, float(confidence)
 
 
 def save_profile(profile: VoiceProfile, filepath: str) -> None:

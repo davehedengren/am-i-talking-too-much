@@ -1,11 +1,14 @@
 """Audio recording utilities using sounddevice."""
 
+import logging
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
 import tempfile
 import os
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 SAMPLE_RATE = 16000  # 16kHz for Whisper compatibility
@@ -32,48 +35,6 @@ def record_audio(duration: float, sample_rate: int = SAMPLE_RATE, device: Option
         device=device
     )
     sd.wait()
-    return audio.flatten()
-
-
-def record_audio_continuous(duration: float, sample_rate: int = SAMPLE_RATE,
-                            device: Optional[int] = None,
-                            progress_callback: Optional[callable] = None) -> np.ndarray:
-    """
-    Record audio continuously for a specified duration with optional progress callback.
-    This avoids gaps that occur when recording in chunks.
-
-    Args:
-        duration: Recording duration in seconds
-        sample_rate: Sample rate in Hz
-        device: Audio input device ID
-        progress_callback: Optional function(progress: float) called during recording
-
-    Returns:
-        numpy array of audio samples
-    """
-    import time
-
-    total_samples = int(duration * sample_rate)
-    audio = sd.rec(
-        total_samples,
-        samplerate=sample_rate,
-        channels=CHANNELS,
-        dtype=np.float32,
-        device=device
-    )
-
-    # Update progress while recording
-    if progress_callback:
-        start_time = time.time()
-        while sd.get_stream().active:
-            elapsed = time.time() - start_time
-            progress = min(elapsed / duration, 1.0)
-            progress_callback(progress)
-            time.sleep(0.1)
-        progress_callback(1.0)
-    else:
-        sd.wait()
-
     return audio.flatten()
 
 
@@ -108,6 +69,7 @@ def get_audio_level(duration: float = 0.1, device: Optional[int] = None) -> floa
         # Use 50x multiplier so normal speech shows ~50-100%
         return min(max(rms * 50, 0.0), 1.0)
     except Exception:
+        logger.debug("Failed to read audio level", exc_info=True)
         return 0.0
 
 

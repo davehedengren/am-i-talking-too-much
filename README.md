@@ -1,57 +1,50 @@
 # Am I Talking Too Much?
 
-A macOS application that helps you monitor your speaking time during conversations to ensure you're not dominating discussions.
+A privacy-first conversation tracker that monitors your speaking percentage in real time. Calibrate your voice, start a conversation, and get instant feedback on whether you're dominating the discussion.
 
-## Features
+Built with Python and Streamlit. All voice matching runs locally on your machine — no audio is stored or sent anywhere.
 
-- **Real-time speaking percentage tracking**: Monitor how much of the conversation time you're using
-- **Voice calibration**: Setup your voice profile for accurate tracking
-- **History tracking**: Review past conversations and your speaking patterns
-- **Customizable goals**: Set your target speaking percentage
-- **Notification alerts**: Get notified when you exceed your speaking threshold
+## Quick Start
 
-## Requirements
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
 
-- macOS 14.0 or later
-- Xcode 15.0 or later (for development)
-- Swift 6.0
+## How It Works
 
-## Building the App
+1. **Voice Calibration** — Record a 10-second sample of your voice. The app builds a GMM (Gaussian Mixture Model) profile from your MFCC features.
+2. **Conversation Tracking** — The app listens in 2-second chunks, detects speech, and matches each chunk against your voice profile. You get a live percentage and color-coded feedback:
+   - **Green** (< 40%) — Great listening
+   - **Yellow** (40–55%) — Balanced
+   - **Red** (> 55%) — Talking a lot
 
-1. Clone the repository
-2. Open Terminal and navigate to the project directory
-3. Run `swift build` to build the project
-4. Run `.build/debug/am-i-talking-too-much-app` to start the application
+Your voice profile is saved to `voice_profile.json` so you only calibrate once.
 
-## Simulation Mode
+## Optional Features
 
-By default, the app runs in simulation mode, which doesn't require microphone access. This allows you to test the app functionality without real audio input.
+### Speaker Embeddings (pyannote)
 
-The simulation mode:
-- Generates random speaking patterns to simulate a conversation
-- Updates the UI in real-time just like the real recording mode
-- Allows you to test all app functionality
+For more accurate speaker identification, you can enable local speaker embeddings via a HuggingFace model:
 
-To disable simulation mode and use real microphone input:
-1. Open `AudioManager.swift`
-2. Change `var isSimulationMode = true` to `var isSimulationMode = false` 
-3. Rebuild the app
+1. Get a [HuggingFace token](https://huggingface.co/settings/tokens)
+2. Create a `.env` file: `HUGGING_FACE_API_KEY=your_token_here`
+3. Re-calibrate your voice — an embedding will be created automatically
 
-## Usage
+The app falls back to the built-in GMM matcher if no token is set.
 
-1. **Start a recording**: Click the microphone button to begin tracking a conversation
-2. **View statistics**: Watch your speaking percentage and time in real-time
-3. **Stop recording**: Click the stop button when the conversation ends
-4. **Review history**: Navigate to the History tab to see past sessions
-5. **Adjust settings**: Set your target speaking percentage in the Settings tab
+### Whisper Transcription
 
-## Development
+Live transcription is available but disabled by default. Toggle it on in the sidebar during tracking. Uses the local `openai-whisper` model (no API key needed).
 
-The app is structured using:
-- SwiftUI for the user interface
-- AVFoundation for audio processing
-- Swift Package Manager for dependency management
+## Running Tests
+
+```bash
+pytest test/
+```
+
+The voice discrimination test requires fixture audio files in `test/fixtures/` (not checked in due to size). See `test/test_voice_discrimination.py` for details.
 
 ## License
 
-This project is available as open source under the terms of the MIT License. 
+MIT
