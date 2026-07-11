@@ -21,8 +21,9 @@ device or a simulator with mic input enabled.
 
 ## Running the tests
 
-The signal-processing core is a standalone Swift package, so its tests run
-without the app (macOS or any Apple platform):
+The signal-processing core is a standalone Swift package with no Apple
+framework dependencies, so its tests run without the app — on macOS or
+even Linux:
 
 ```bash
 cd ios/VoiceCore

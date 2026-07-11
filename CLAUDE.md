@@ -22,7 +22,7 @@ streamlit run app.py
 # Generate the Xcode project (requires XcodeGen)
 cd ios && xcodegen generate
 
-# Run the DSP core tests (macOS/Xcode required)
+# Run the DSP core tests (any Swift toolchain — macOS or Linux)
 cd ios/VoiceCore && swift test
 
 # Regenerate Swift parity fixtures after changing voice_matcher.py
