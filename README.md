@@ -2,14 +2,28 @@
 
 A privacy-first conversation tracker that monitors your speaking percentage in real time. Calibrate your voice, start a conversation, and get instant feedback on whether you're dominating the discussion.
 
-Built with Python and Streamlit. All voice matching runs locally on your machine — no audio is stored or sent anywhere.
+All voice matching runs locally on your machine — no audio is stored or sent anywhere. Two implementations share the same algorithm (and the same `voice_profile.json` format):
+
+- **Python/Streamlit** (repository root) — desktop, runs in the browser
+- **iOS/SwiftUI** ([`ios/`](ios/)) — native iPhone app
 
 ## Quick Start
+
+### Python / Streamlit
 
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
+
+### iOS
+
+```bash
+brew install xcodegen
+cd ios && xcodegen generate && open AmITalkingTooMuch.xcodeproj
+```
+
+See [`ios/README.md`](ios/README.md) for details.
 
 ## How It Works
 
@@ -44,6 +58,8 @@ pytest test/
 ```
 
 The voice discrimination test requires fixture audio files in `test/fixtures/` (not checked in due to size). See `test/test_voice_discrimination.py` for details.
+
+The iOS signal-processing core has its own test suite (`cd ios/VoiceCore && swift test`), which verifies numerical parity against fixtures generated from this Python implementation (`ios/scripts/generate_fixtures.py`).
 
 ## License
 
