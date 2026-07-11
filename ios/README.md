@@ -35,20 +35,25 @@ swift test
 ```
 ios/
 ├── project.yml            XcodeGen spec (generates AmITalkingTooMuch.xcodeproj)
-├── VoiceCore/             Platform-neutral SwiftPM package — the DSP core
+├── VoiceCore/             Platform-neutral SwiftPM package — all non-UI logic
 │   ├── Sources/VoiceCore/
 │   │   ├── MFCC.swift             framing, Hamming window, mel bank, DCT
-│   │   ├── FFT.swift              pure-Swift radix-2 FFT
+│   │   ├── FFT.swift              pure-Swift radix-2 FFT, precomputed twiddles
 │   │   ├── GaussianMixture.swift  diag-covariance GMM: EM training + scoring
 │   │   ├── VoiceProfile.swift     Codable profile (Python-compatible JSON)
-│   │   └── VoiceMatcher.swift     calibration + match decisions
-│   └── Tests/VoiceCoreTests/      parity tests against Python fixtures
-├── App/Sources/           SwiftUI app layer
-│   ├── AudioCapture.swift         AVAudioEngine → 16 kHz mono stream
-│   ├── CalibrationView(-Model)    10 s voice recording, playback, save
-│   ├── TrackingView(-Model)       live %, chart, stats, debug log
-│   └── SettingsView.swift         re-calibrate, guide, privacy
-└── scripts/               fixture generation / port verification (Python)
+│   │   ├── VoiceMatcher.swift     calibration, match decisions, parity constants
+│   │   ├── SampleSink.swift       thread-safe capture-queue → UI sample buffer
+│   │   └── WavCodec.swift         16-bit PCM WAV encoder for playback
+│   └── Tests/VoiceCoreTests/      parity tests against Python fixtures + unit tests
+├── App/
+│   ├── Sources/           SwiftUI app layer
+│   │   ├── AudioCapture.swift         AVAudioEngine → 16 kHz mono stream, with
+│   │   │                              route-change/interruption/media-reset recovery
+│   │   ├── CalibrationView(-Model)    10 s voice recording, playback, save
+│   │   ├── TrackingView(-Model)       live %, chart, stats, debug log
+│   │   └── SettingsView.swift         re-calibrate, guide, privacy
+│   └── Resources/PrivacyInfo.xcprivacy   no collection, no tracking
+└── scripts/generate_fixtures.py   regenerates the parity fixtures from Python
 ```
 
 ### Parity with the Python app
@@ -84,10 +89,8 @@ pip install numpy scipy scikit-learn
 python3 ios/scripts/generate_fixtures.py
 ```
 
-Regenerate them whenever `voice_matcher.py` changes. If Swift isn't
-available, `ios/scripts/verify_port_reference.py` is a line-by-line Python
-mirror of the Swift implementation that runs the same assertions as the
-Swift test suite.
+Regenerate them whenever `voice_matcher.py` changes, then run `swift test`
+to confirm the port still agrees.
 
 ## Deliberate differences from the Python app
 

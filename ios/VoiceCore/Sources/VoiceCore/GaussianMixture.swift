@@ -36,27 +36,8 @@ public struct GaussianMixture {
     /// Log-likelihood of each sample under the mixture
     /// (`sklearn.GaussianMixture.score_samples`).
     public func scoreSamples(_ samples: [[Double]]) -> [Double] {
-        let k = weights.count
-        let logWeights = weights.map { $0 > 0 ? log($0) : -Double.infinity }
-        // Per-component log-determinant term: sum_d log(precision_cholesky).
-        let logDet = (0..<k).map { c in
-            precisionsCholesky[c].reduce(0.0) { $0 + log($1) }
-        }
-
-        return samples.map { x in
-            let d = x.count
-            var weighted = [Double](repeating: 0, count: k)
-            for c in 0..<k {
-                var mahalanobis = 0.0
-                for j in 0..<d {
-                    let z = (x[j] - means[c][j]) * precisionsCholesky[c][j]
-                    mahalanobis += z * z
-                }
-                let logProb = -0.5 * (Double(d) * log(2 * Double.pi) + mahalanobis) + logDet[c]
-                weighted[c] = logProb + logWeights[c]
-            }
-            return logSumExp(weighted)
-        }
+        let density = MixtureDensity(self)
+        return samples.map { logSumExp(density.weightedLogProbabilities(of: $0)) }
     }
 
     /// Fit a diagonal-covariance GMM with EM, best of `numInits` runs
@@ -89,7 +70,6 @@ public struct GaussianMixture {
         rng: inout SplitMix64
     ) -> (GaussianMixture, Double) {
         let n = x.count
-        let d = x[0].count
 
         // Initialize responsibilities from hard k-means labels.
         let labels = kMeans(x, k: k, rng: &rng)
@@ -102,24 +82,14 @@ public struct GaussianMixture {
         var lowerBound = -Double.infinity
 
         for _ in 0..<maxIterations {
-            // E-step: responsibilities and per-sample log-likelihood.
-            let model = GaussianMixture(weights: weights, means: means, covariances: covariances)
-            let logWeights = weights.map { $0 > 0 ? log($0) : -Double.infinity }
-            let logDet = (0..<k).map { c in
-                model.precisionsCholesky[c].reduce(0.0) { $0 + log($1) }
-            }
+            // E-step: responsibilities and per-sample log-likelihood, using
+            // the same density math as scoreSamples.
+            let density = MixtureDensity(
+                GaussianMixture(weights: weights, means: means, covariances: covariances)
+            )
             var totalLogProb = 0.0
             for i in 0..<n {
-                var weighted = [Double](repeating: 0, count: k)
-                for c in 0..<k {
-                    var mahalanobis = 0.0
-                    for j in 0..<d {
-                        let z = (x[i][j] - means[c][j]) * model.precisionsCholesky[c][j]
-                        mahalanobis += z * z
-                    }
-                    weighted[c] = -0.5 * (Double(d) * log(2 * Double.pi) + mahalanobis)
-                        + logDet[c] + logWeights[c]
-                }
+                let weighted = density.weightedLogProbabilities(of: x[i])
                 let norm = logSumExp(weighted)
                 totalLogProb += norm
                 for c in 0..<k {
@@ -273,6 +243,41 @@ public struct GaussianMixture {
             sum += diff * diff
         }
         return sum
+    }
+}
+
+/// Precomputed terms of the mixture density. Both scoring and the EM
+/// E-step evaluate log(w_k) + log N(x | μ_k, Σ_k) through this one
+/// implementation so the two can never drift apart.
+private struct MixtureDensity {
+    let means: [[Double]]
+    let precisionsCholesky: [[Double]]
+    let logWeights: [Double]
+    let logDeterminants: [Double]
+
+    init(_ gmm: GaussianMixture) {
+        means = gmm.means
+        precisionsCholesky = gmm.precisionsCholesky
+        logWeights = gmm.weights.map { $0 > 0 ? log($0) : -Double.infinity }
+        // Per-component log-determinant term: sum_d log(precision_cholesky).
+        logDeterminants = gmm.precisionsCholesky.map { row in
+            row.reduce(0.0) { $0 + log($1) }
+        }
+    }
+
+    func weightedLogProbabilities(of x: [Double]) -> [Double] {
+        let d = x.count
+        var weighted = [Double](repeating: 0, count: logWeights.count)
+        for c in 0..<weighted.count {
+            var mahalanobis = 0.0
+            for j in 0..<d {
+                let z = (x[j] - means[c][j]) * precisionsCholesky[c][j]
+                mahalanobis += z * z
+            }
+            weighted[c] = -0.5 * (Double(d) * log(2 * Double.pi) + mahalanobis)
+                + logDeterminants[c] + logWeights[c]
+        }
+        return weighted
     }
 }
 

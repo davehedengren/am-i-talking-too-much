@@ -83,6 +83,30 @@ final class GMMParityTests: XCTestCase {
         }
     }
 
+    func testRaggedProfileShapesAreRejected() {
+        // Inner rows shorter than the profile dimension must fail decoding
+        // (scoring would index out of range), triggering the corrupt-profile
+        // recovery instead of a crash.
+        let ragged = """
+        {"weights": [0.5, 0.5], "means": [[0.0, 0.0], [1.0]],
+         "covariances": [[1.0, 1.0], [1.0, 1.0]],
+         "precisions_cholesky": [[1.0, 1.0], [1.0, 1.0]], "threshold_score": -5.0}
+        """
+        XCTAssertThrowsError(try JSONDecoder().decode(VoiceProfile.self, from: Data(ragged.utf8)))
+
+        let truncatedCovariances = """
+        {"weights": [1.0], "means": [[0.0, 0.0]], "covariances": [[1.0]],
+         "precisions_cholesky": [[1.0, 1.0]], "threshold_score": -5.0}
+        """
+        XCTAssertThrowsError(try JSONDecoder().decode(VoiceProfile.self, from: Data(truncatedCovariances.utf8)))
+
+        let emptyRows = """
+        {"weights": [1.0], "means": [[]], "covariances": [[]],
+         "precisions_cholesky": [[]], "threshold_score": -5.0}
+        """
+        XCTAssertThrowsError(try JSONDecoder().decode(VoiceProfile.self, from: Data(emptyRows.utf8)))
+    }
+
     func testMissingThresholdDefaultsLikePython() throws {
         let json = """
         {"weights": [1.0], "means": [[0.0]], "covariances": [[1.0]], "precisions_cholesky": [[1.0]]}

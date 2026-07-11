@@ -10,6 +10,14 @@ public enum VoiceMatcher {
     /// are treated as "not you" without scoring).
     public static let minimumRMS = 0.01
 
+    /// RMS above which a chunk counts as speech at all (yours or someone
+    /// else's); quieter chunks are silence and excluded from the totals.
+    /// Parity: app.py SPEECH_THRESHOLD.
+    public static let speechGateRMS = 0.005
+
+    /// Tracking analyzes audio in chunks of this length, like the Python app.
+    public static let chunkSeconds = 2.0
+
     /// Build a voice profile from a calibration recording (~10 s of speech).
     public static func createProfile(_ audio: [Double], sampleRate: Int = sampleRate) -> VoiceProfile {
         let features = MFCC.extract(audio, sampleRate: sampleRate, numMFCC: numCoefficients)
@@ -20,12 +28,16 @@ public enum VoiceMatcher {
         let gmm = GaussianMixture.fit(features, numComponents: numComponents, numInits: 3, seed: 42)
 
         let scores = gmm.scoreSamples(features)
+        return VoiceProfile(gmm: gmm, thresholdScore: calibrationThreshold(forScores: scores))
+    }
+
+    /// Threshold below which a chunk's average log-likelihood is "not you".
+    /// Short tracking chunks (2 s) score with higher variance than the
+    /// calibration window, so the threshold leaves 1.5 sigma of headroom.
+    static func calibrationThreshold(forScores scores: [Double]) -> Double {
         let average = mean(scores)
         let standardDeviation = sqrt(mean(scores.map { ($0 - average) * ($0 - average) }))
-
-        // Short tracking chunks (2 s) score with higher variance than the
-        // calibration window, so the threshold leaves 1.5 sigma of headroom.
-        return VoiceProfile(gmm: gmm, thresholdScore: average - 1.5 * standardDeviation)
+        return average - 1.5 * standardDeviation
     }
 
     /// Decide whether an audio segment is the calibrated speaker.
@@ -41,7 +53,9 @@ public enum VoiceMatcher {
         }
 
         let features = MFCC.extract(audio, sampleRate: sampleRate, numMFCC: numCoefficients)
-        guard features.count >= 5 else {
+        // Too few frames to judge, or a profile trained with a different
+        // feature dimension (scoring it would index out of range).
+        guard features.count >= 5, features[0].count == profile.dimension else {
             return (false, 0)
         }
 
@@ -55,6 +69,13 @@ public enum VoiceMatcher {
     public static func rms(_ audio: [Double]) -> Double {
         guard !audio.isEmpty else { return 0 }
         return sqrt(audio.reduce(0) { $0 + $1 * $1 } / Double(audio.count))
+    }
+
+    /// Level-meter value in 0...1. Typical speech RMS is 0.01-0.05, so the
+    /// 50x scaling shows normal speech around 50-100% (parity:
+    /// audio_recorder.get_audio_level).
+    public static func meterLevel(_ audio: [Double]) -> Double {
+        min(max(rms(audio) * 50, 0), 1)
     }
 
     static func mean(_ values: [Double]) -> Double {

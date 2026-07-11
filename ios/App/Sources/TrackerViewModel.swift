@@ -3,12 +3,6 @@ import VoiceCore
 
 @MainActor
 final class TrackerViewModel: ObservableObject {
-    /// Audio is analyzed in 2-second chunks, matching the Python app.
-    static let chunkSeconds = 2.0
-    /// RMS above this counts as speech (yours or someone else's);
-    /// quieter chunks are silence and not counted at all.
-    static let speechRMSThreshold = 0.005
-
     @Published var isTracking = false
     @Published var userSeconds = 0.0
     @Published var totalSeconds = 0.0
@@ -23,37 +17,54 @@ final class TrackerViewModel: ObservableObject {
 
     private let capture: AudioCapture
     private let sink = SampleSink()
-    private let chunkSampleCount = Int(chunkSeconds * AudioCapture.sampleRate)
+    private let chunkSampleCount = Int(VoiceMatcher.chunkSeconds * AudioCapture.sampleRate)
 
     init(capture: AudioCapture) {
         self.capture = capture
     }
 
-    /// Start the microphone; runs the level meter continuously and analyzes
+    /// Start the microphone; runs the level meter while idle and analyzes
     /// chunks whenever tracking is on.
     func startMonitoring(profile: VoiceProfile) async {
         guard await AudioCapture.requestPermission() else {
             errorMessage = AudioCaptureError.permissionDenied.errorDescription
             return
         }
+        // The view may have been swapped away while awaiting the permission
+        // callback; starting now would steal the capture from its successor.
+        guard !Task.isCancelled else { return }
 
         do {
-            try capture.start(owner: self) { [weak self] samples in
+            try capture.start(owner: self, onFailure: { [weak self] error in
+                Task { @MainActor in
+                    self?.errorMessage = "Microphone stopped: \(error.localizedDescription)"
+                }
+            }) { [weak self] samples in
                 guard let self else { return }
-                let level = min(max(VoiceMatcher.rms(samples) * 50, 0), 1)
-                _ = self.sink.ingest(samples)
+                // We are on the capture queue: do the analysis here and hop
+                // to the main queue (FIFO, unlike unstructured Tasks) only
+                // to publish.
+                let tracking = self.sink.isCollecting
+                let level = tracking ? 0 : VoiceMatcher.meterLevel(samples)
+                self.sink.ingest(samples)
 
-                // Analyze full chunks off the main thread (we are on the
-                // capture queue here); only publishing hops to the main actor.
                 var results: [ChunkResult] = []
                 while let chunk = self.sink.drain(self.chunkSampleCount) {
                     results.append(Self.analyze(chunk, profile: profile))
                 }
 
-                Task { @MainActor in
-                    self.level = level
-                    for result in results {
-                        self.apply(result)
+                // While tracking, the level meter is not rendered — publish
+                // only when a chunk finished, so the chart-bearing view body
+                // is invalidated once per chunk, not per audio buffer.
+                guard !tracking || !results.isEmpty else { return }
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        if !tracking {
+                            self.level = level
+                        }
+                        for result in results {
+                            self.apply(result)
+                        }
                     }
                 }
             }
@@ -70,6 +81,7 @@ final class TrackerViewModel: ObservableObject {
 
     func startTracking() {
         reset()
+        errorMessage = nil
         sink.setCollecting(true)
         isTracking = true
     }
@@ -97,7 +109,7 @@ final class TrackerViewModel: ObservableObject {
     nonisolated private static func analyze(_ chunk: [Double], profile: VoiceProfile) -> ChunkResult {
         let rms = VoiceMatcher.rms(chunk)
         let peak = chunk.reduce(0.0) { max($0, abs($1)) }
-        guard rms > speechRMSThreshold else {
+        guard rms > VoiceMatcher.speechGateRMS else {
             return ChunkResult(rms: rms, peak: peak, isSpeech: false, isUser: false, confidence: 0)
         }
         let match = VoiceMatcher.match(chunk, profile: profile)
@@ -112,9 +124,9 @@ final class TrackerViewModel: ObservableObject {
 
         var entry = String(format: "RMS: %.4f | Max: %.4f", result.rms, result.peak)
         if result.isSpeech {
-            totalSeconds += Self.chunkSeconds
+            totalSeconds += VoiceMatcher.chunkSeconds
             if result.isUser {
-                userSeconds += Self.chunkSeconds
+                userSeconds += VoiceMatcher.chunkSeconds
             }
             percentageHistory.append(percentage)
             entry += String(format: " | SPEECH | gmm: %.2f | IsYou: %@",

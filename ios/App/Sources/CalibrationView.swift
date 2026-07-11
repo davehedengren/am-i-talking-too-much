@@ -29,6 +29,15 @@ struct CalibrationView: View {
                     LevelMeterView(level: viewModel.level)
                 }
 
+                if model.profileWasReset {
+                    Label(
+                        "Your saved voice profile couldn't be loaded and has been reset. Please re-calibrate.",
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+                }
+
                 if let error = viewModel.errorMessage {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .font(.footnote)
@@ -70,6 +79,7 @@ struct CalibrationView: View {
         switch viewModel.phase {
         case .idle:
             Button {
+                model.clearResetNotice()
                 viewModel.startRecording()
             } label: {
                 Label("Start Recording (10 seconds)", systemImage: "mic.fill")

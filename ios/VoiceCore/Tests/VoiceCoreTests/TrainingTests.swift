@@ -5,13 +5,11 @@ struct TrainingFixture: Decodable {
     let trainFeatures: [[Double]]
     let evalUserFeatures: [[Double]]
     let evalOtherFeatures: [[Double]]
-    let pythonThreshold: Double
 
     enum CodingKeys: String, CodingKey {
         case trainFeatures = "train_features"
         case evalUserFeatures = "eval_user_features"
         case evalOtherFeatures = "eval_other_features"
-        case pythonThreshold = "python_threshold"
     }
 }
 
@@ -26,10 +24,10 @@ final class TrainingTests: XCTestCase {
         let numComponents = max(1, min(16, fixture.trainFeatures.count / 20))
         let gmm = GaussianMixture.fit(fixture.trainFeatures, numComponents: numComponents)
 
+        // Use the production threshold rule so this test tracks whatever
+        // createProfile actually ships.
         let trainScores = gmm.scoreSamples(fixture.trainFeatures)
-        let average = trainScores.reduce(0, +) / Double(trainScores.count)
-        let variance = trainScores.reduce(0) { $0 + ($1 - average) * ($1 - average) } / Double(trainScores.count)
-        let threshold = average - 1.5 * sqrt(variance)
+        let threshold = VoiceMatcher.calibrationThreshold(forScores: trainScores)
 
         let userScores = gmm.scoreSamples(fixture.evalUserFeatures)
         let otherScores = gmm.scoreSamples(fixture.evalOtherFeatures)

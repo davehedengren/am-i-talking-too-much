@@ -34,14 +34,25 @@ final class CalibrationViewModel: ObservableObject {
             errorMessage = AudioCaptureError.permissionDenied.errorDescription
             return
         }
+        // The view may have been swapped away while awaiting the permission
+        // callback; starting now would steal the capture from its successor.
+        guard !Task.isCancelled else { return }
 
         do {
-            try capture.start(owner: self) { [weak self] samples in
-                guard let self else { return }
-                let level = min(max(VoiceMatcher.rms(samples) * 50, 0), 1)
-                let collectedCount = self.sink.ingest(samples)
+            try capture.start(owner: self, onFailure: { [weak self] error in
                 Task { @MainActor in
-                    self.handleAudioUpdate(level: level, collectedCount: collectedCount)
+                    self?.errorMessage = "Microphone stopped: \(error.localizedDescription)"
+                }
+            }) { [weak self] samples in
+                guard let self else { return }
+                let level = VoiceMatcher.meterLevel(samples)
+                let collectedCount = self.sink.ingest(samples)
+                // Main queue rather than an unstructured Task: FIFO, so the
+                // recording progress can never regress.
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        self.handleAudioUpdate(level: level, collectedCount: collectedCount)
+                    }
                 }
             }
         } catch {
@@ -56,6 +67,7 @@ final class CalibrationViewModel: ObservableObject {
     func startRecording() {
         guard capture.isRunning else { return }
         player?.stop()
+        errorMessage = nil
         sink.setCollecting(true)
         phase = .recording(progress: 0)
     }
@@ -69,12 +81,14 @@ final class CalibrationViewModel: ObservableObject {
 
     func playRecording() {
         guard !recordedAudio.isEmpty else { return }
-        let data = WavCodec.encode(recordedAudio, sampleRate: Int(AudioCapture.sampleRate))
+        let data = WavCodec.encode(recordedAudio)
         player = try? AVAudioPlayer(data: data, fileTypeHint: AVFileType.wav.rawValue)
         player?.play()
     }
 
-    /// Train the GMM profile from the recording and hand it to the app model.
+    /// Train the GMM profile from the recording and hand it to the app
+    /// model. Persistence failures come back to this screen instead of
+    /// pretending the profile was saved.
     func saveProfile(into model: AppModel) {
         guard phase == .recorded, !recordedAudio.isEmpty else { return }
         phase = .saving
@@ -82,7 +96,12 @@ final class CalibrationViewModel: ObservableObject {
         Task.detached(priority: .userInitiated) {
             let profile = VoiceMatcher.createProfile(audio)
             await MainActor.run {
-                model.save(profile)
+                do {
+                    try model.save(profile)
+                } catch {
+                    self.errorMessage = "Could not save the profile: \(error.localizedDescription)"
+                    self.phase = .recorded
+                }
             }
         }
     }

@@ -34,6 +34,7 @@ public enum MFCC {
         let window = hammingWindow(frameSize)
         let filterbank = melFilterbank(numFilters: numMelFilters, fftSize: frameSize, sampleRate: sampleRate)
         let dct = dctMatrix(numMFCC: numMFCC, numFilters: numMelFilters)
+        let twiddles = FFT.Twiddles(size: frameSize)
         let numBins = frameSize / 2 + 1
 
         var mfcc = [[Double]](repeating: [Double](repeating: 0, count: numMFCC), count: numFrames)
@@ -48,7 +49,7 @@ public enum MFCC {
                 real[i] = samples[start + i] * window[i]
                 imag[i] = 0
             }
-            FFT.forward(real: &real, imag: &imag)
+            FFT.forward(real: &real, imag: &imag, twiddles: twiddles)
             for k in 0..<numBins {
                 power[k] = real[k] * real[k] + imag[k] * imag[k]
             }

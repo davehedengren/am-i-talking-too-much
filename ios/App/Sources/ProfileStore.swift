@@ -13,28 +13,36 @@ struct ProfileStore {
             .appendingPathComponent("voice_profile.json")
     }
 
-    func load() -> VoiceProfile? {
+    /// Load the saved profile. `wasReset` is true when a file existed but
+    /// was corrupted or incompatible and had to be discarded — the UI tells
+    /// the user to re-calibrate (same recovery as the Python app).
+    func load() -> (profile: VoiceProfile?, wasReset: Bool) {
+        let data: Data
         do {
-            let data = try Data(contentsOf: fileURL)
-            return try JSONDecoder().decode(VoiceProfile.self, from: data)
-        } catch CocoaError.fileReadNoSuchFile {
-            return nil
+            data = try Data(contentsOf: fileURL)
         } catch {
-            // Incompatible or corrupted profile: drop it and re-calibrate,
-            // same recovery as the Python app.
+            return (nil, false)
+        }
+
+        do {
+            let profile = try JSONDecoder().decode(VoiceProfile.self, from: data)
+            guard profile.dimension == VoiceMatcher.numCoefficients else {
+                // Trained with a different feature dimension — unusable here.
+                Self.logger.error("Voice profile has dimension \(profile.dimension), expected \(VoiceMatcher.numCoefficients); resetting")
+                delete()
+                return (nil, true)
+            }
+            return (profile, false)
+        } catch {
             Self.logger.error("Failed to load voice profile: \(error.localizedDescription)")
             delete()
-            return nil
+            return (nil, true)
         }
     }
 
-    func save(_ profile: VoiceProfile) {
-        do {
-            let data = try JSONEncoder().encode(profile)
-            try data.write(to: fileURL, options: .atomic)
-        } catch {
-            Self.logger.error("Failed to save voice profile: \(error.localizedDescription)")
-        }
+    func save(_ profile: VoiceProfile) throws {
+        let data = try JSONEncoder().encode(profile)
+        try data.write(to: fileURL, options: .atomic)
     }
 
     func delete() {

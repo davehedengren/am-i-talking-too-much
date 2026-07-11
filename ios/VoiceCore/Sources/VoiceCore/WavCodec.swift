@@ -1,9 +1,9 @@
 import Foundation
 
 /// Minimal 16-bit PCM mono WAV encoder, used to play back the calibration
-/// recording with AVAudioPlayer.
-enum WavCodec {
-    static func encode(_ samples: [Double], sampleRate: Int = 16000) -> Data {
+/// recording.
+public enum WavCodec {
+    public static func encode(_ samples: [Double], sampleRate: Int = VoiceMatcher.sampleRate) -> Data {
         let dataSize = samples.count * 2
         var data = Data(capacity: 44 + dataSize)
 

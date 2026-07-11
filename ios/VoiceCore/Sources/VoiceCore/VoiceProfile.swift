@@ -39,16 +39,30 @@ public struct VoiceProfile: Codable, Equatable {
         // threshold field existed.
         thresholdScore = try container.decodeIfPresent(Double.self, forKey: .thresholdScore) ?? -20.0
 
+        // Validate inner dimensions too: scoring indexes every row up to the
+        // feature dimension, so a ragged or truncated profile must be
+        // rejected here (triggering the corrupt-profile recovery) rather
+        // than crash on the first scored chunk.
+        let dimension = means.first?.count ?? 0
         guard !weights.isEmpty,
+              dimension > 0,
               means.count == weights.count,
               covariances.count == weights.count,
-              precisionsCholesky.count == weights.count
+              precisionsCholesky.count == weights.count,
+              means.allSatisfy({ $0.count == dimension }),
+              covariances.allSatisfy({ $0.count == dimension }),
+              precisionsCholesky.allSatisfy({ $0.count == dimension })
         else {
             throw DecodingError.dataCorrupted(DecodingError.Context(
                 codingPath: decoder.codingPath,
                 debugDescription: "Inconsistent GMM parameter shapes in voice profile"
             ))
         }
+    }
+
+    /// Feature dimension the profile was trained on (MFCC coefficient count).
+    public var dimension: Int {
+        means.first?.count ?? 0
     }
 
     public var gmm: GaussianMixture {
