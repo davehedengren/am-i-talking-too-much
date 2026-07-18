@@ -11,7 +11,9 @@ enum AudioCaptureError: LocalizedError {
         case .permissionDenied:
             return "Microphone access is denied. Enable it in Settings to use the app."
         case .formatUnavailable:
-            return "The microphone format could not be configured."
+            return "No microphone input is available. On the Simulator, "
+                + "enable Device \u{203A} I/O \u{203A} Audio Input (or run on a "
+                + "real device), then reopen this screen."
         }
     }
 }
@@ -129,20 +131,29 @@ final class AudioCapture {
         try session.setCategory(
             .playAndRecord,
             mode: .measurement,
-            options: [.defaultToSpeaker, .allowBluetooth]
+            options: [.defaultToSpeaker, .allowBluetoothHFP]
         )
         try session.setActive(true)
 
         let input = engine.inputNode
-        let inputFormat = input.outputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0,
+        // Prepare so the input node configures itself against the active
+        // session before we read its format.
+        engine.prepare()
+        // Use the hardware *input* format for the tap and converter, not the
+        // node's output format. On the Simulator `outputFormat(forBus:0)`
+        // reports 0 Hz even when a mic is routed, whereas `inputFormat` reports
+        // the real format (e.g. 44.1 kHz mono). A 0 Hz / 0-channel format means
+        // no mic input is available — fail gracefully rather than crashing in
+        // installTap/start (IsFormatSampleRateAndChannelCountValid).
+        let recordingFormat = input.inputFormat(forBus: 0)
+        guard recordingFormat.sampleRate > 0, recordingFormat.channelCount > 0,
               let targetFormat = AVAudioFormat(
                   commonFormat: .pcmFormatFloat32,
                   sampleRate: Self.sampleRate,
                   channels: 1,
                   interleaved: false
               ),
-              let converter = AVAudioConverter(from: inputFormat, to: targetFormat)
+              let converter = AVAudioConverter(from: recordingFormat, to: targetFormat)
         else {
             throw AudioCaptureError.formatUnavailable
         }
@@ -152,13 +163,12 @@ final class AudioCapture {
         // previous tap first — installing twice on the same bus raises an
         // uncatchable NSException.
         input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [processingQueue] buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 4096, format: recordingFormat) { [processingQueue] buffer, _ in
             processingQueue.async {
                 Self.convertAndDeliver(buffer, converter: converter, targetFormat: targetFormat, to: deliver)
             }
         }
 
-        engine.prepare()
         do {
             try engine.start()
         } catch {

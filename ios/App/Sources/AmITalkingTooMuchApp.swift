@@ -3,11 +3,13 @@ import SwiftUI
 @main
 struct AmITalkingTooMuchApp: App {
     @StateObject private var model = AppModel()
+    @StateObject private var history = HistoryStore()
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(model)
+                .environmentObject(history)
         }
     }
 }

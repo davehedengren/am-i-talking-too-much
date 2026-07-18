@@ -19,6 +19,10 @@ final class TrackerViewModel: ObservableObject {
     private let sink = SampleSink()
     private let chunkSampleCount = Int(VoiceMatcher.chunkSeconds * AudioCapture.sampleRate)
 
+    // Per-chunk timeline for the saved-event chart, plus the run's start time.
+    private var trackingStart: Date?
+    private var chunkOutcomes: [ChunkOutcome] = []
+
     init(capture: AudioCapture) {
         self.capture = capture
     }
@@ -81,9 +85,27 @@ final class TrackerViewModel: ObservableObject {
 
     func startTracking() {
         reset()
+        trackingStart = Date()
         errorMessage = nil
         sink.setCollecting(true)
         isTracking = true
+    }
+
+    /// Snapshot the just-finished run as a draft event, or nil if nothing worth
+    /// saving was captured. Call after `stopTracking()`, before `reset()`.
+    func makeDraft() -> SessionDraft? {
+        guard let start = trackingStart, totalSeconds > 0 else { return nil }
+        let buckets = Session.buildBuckets(
+            chunkOutcomes: chunkOutcomes,
+            chunkSeconds: VoiceMatcher.chunkSeconds
+        )
+        return SessionDraft(
+            start: start,
+            end: Date(),
+            userSeconds: userSeconds,
+            totalSpeechSeconds: totalSeconds,
+            buckets: buckets
+        )
     }
 
     func stopTracking() {
@@ -96,6 +118,8 @@ final class TrackerViewModel: ObservableObject {
         totalSeconds = 0
         percentageHistory = []
         debugLog = []
+        chunkOutcomes = []
+        trackingStart = nil
     }
 
     struct ChunkResult {
@@ -121,6 +145,10 @@ final class TrackerViewModel: ObservableObject {
 
     private func apply(_ result: ChunkResult) {
         guard isTracking else { return }
+
+        // Record one timeline entry per chunk (including silence) so saved-event
+        // buckets keep accurate time positions.
+        chunkOutcomes.append(result.isSpeech ? (result.isUser ? .you : .others) : .silence)
 
         var entry = String(format: "RMS: %.4f | Max: %.4f", result.rms, result.peak)
         if result.isSpeech {
