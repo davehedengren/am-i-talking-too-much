@@ -90,9 +90,12 @@ struct TrackingView: View {
             }
             .environmentObject(history)
         }
-        .task {
-            if let profile = model.profile {
-                await viewModel.startMonitoring(profile: profile)
+        // Re-runs when the neural/GMM toggle changes so you can A/B mid-session
+        // without leaving the screen.
+        .task(id: model.useNeuralMatching) {
+            viewModel.stopMonitoring()
+            if let matcher = model.activeMatcher() {
+                await viewModel.startMonitoring(matcher: matcher)
             }
         }
         .onDisappear {

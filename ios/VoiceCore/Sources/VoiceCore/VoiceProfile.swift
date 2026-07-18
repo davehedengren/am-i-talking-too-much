@@ -6,7 +6,7 @@ import Foundation
 /// The JSON encoding matches the Python app's `voice_profile.json` exactly
 /// (same keys, same shapes), so profiles are interchangeable between the
 /// Streamlit and iOS apps.
-public struct VoiceProfile: Codable, Equatable {
+public struct VoiceProfile: Codable, Equatable, Sendable {
     public var weights: [Double]
     public var means: [[Double]]
     public var covariances: [[Double]]
