@@ -25,8 +25,22 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
     }
 
     /// Resolve the current place. Returns empty `Place` fields when location is
-    /// unavailable or not permitted.
+    /// unavailable or not permitted. Bounded by a timeout so the save sheet's
+    /// spinner can never hang on a slow fix or geocode.
     func currentPlace() async -> Place {
+        await withTaskGroup(of: Place.self) { group in
+            group.addTask { await self.resolvePlace() }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 10 * 1_000_000_000)
+                return Place()
+            }
+            let first = await group.next() ?? Place()
+            group.cancelAll()
+            return first
+        }
+    }
+
+    private func resolvePlace() async -> Place {
         let status = await ensureAuthorized()
         guard status == .authorizedWhenInUse || status == .authorizedAlways else {
             return Place()
@@ -70,6 +84,10 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
 
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         let status = manager.authorizationStatus
+        // Ignore the transient .notDetermined callback delivered the moment the
+        // delegate is set — resuming on it would abandon the request before the
+        // user answers the permission prompt. Wait for the real decision.
+        guard status != .notDetermined else { return }
         Task { @MainActor in
             guard let continuation = authContinuation else { return }
             authContinuation = nil
