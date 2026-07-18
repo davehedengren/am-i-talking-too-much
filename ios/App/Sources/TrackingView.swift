@@ -52,7 +52,8 @@ struct TrackingView: View {
                         LevelMeterView(level: viewModel.level)
                     }
                 } else {
-                    Label("Listening… speak naturally!", systemImage: "mic.fill")
+                    let matcherName = (model.useNeuralMatching && model.neuralProfile != nil) ? "Neural" : "Classic"
+                    Label("Listening (\(matcherName))… speak naturally!", systemImage: "mic.fill")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }

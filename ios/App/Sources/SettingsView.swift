@@ -18,15 +18,19 @@ struct SettingsView: View {
                     }
                 }
 
-                if model.neuralProfile != nil {
-                    Section {
+                Section {
+                    if model.neuralProfile != nil {
                         Toggle("Neural matching (beta)", isOn: $model.useNeuralMatching)
                         Text("Uses Apple's on-device audio model — usually better at telling you apart from others in noisy rooms. Turn off to use the classic matcher.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
-                    } header: {
-                        Text("Voice Matching")
+                    } else {
+                        Label("Neural profile not enrolled — re-calibrate to enable. Using the classic matcher.", systemImage: "exclamationmark.triangle")
+                            .font(.footnote)
+                            .foregroundStyle(.orange)
                     }
+                } header: {
+                    Text("Voice Matching")
                 }
 
                 Section("Guide") {
