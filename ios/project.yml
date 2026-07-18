@@ -30,6 +30,9 @@ targets:
           The app listens to the conversation to measure how much of the
           speaking time is yours. Audio is analyzed on-device and never
           stored or uploaded.
+        NSLocationWhenInUseUsageDescription: >-
+          Your location is used only to label a saved event with where it
+          happened. It stays on your device and is never uploaded.
         UIBackgroundModes:
           - audio
         UILaunchScreen: {}

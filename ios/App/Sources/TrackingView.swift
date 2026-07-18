@@ -3,8 +3,10 @@ import SwiftUI
 
 struct TrackingView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var history: HistoryStore
     @StateObject private var viewModel: TrackerViewModel
     @State private var showSettings = false
+    @State private var pendingDraft: SessionDraft?
 
     @MainActor
     init() {
@@ -63,6 +65,14 @@ struct TrackingView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink {
+                    HistoryListView()
+                        .environmentObject(history)
+                } label: {
+                    Image(systemName: "list.bullet")
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     showSettings = true
                 } label: {
@@ -73,6 +83,12 @@ struct TrackingView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView()
                 .environmentObject(model)
+        }
+        .sheet(item: $pendingDraft) { draft in
+            SaveSessionView(draft: draft) {
+                viewModel.reset()
+            }
+            .environmentObject(history)
         }
         .task {
             if let profile = model.profile {
@@ -113,9 +129,9 @@ struct TrackingView: View {
     private var stats: some View {
         VStack(spacing: 8) {
             HStack(spacing: 12) {
-                StatTile(title: "You spoke", value: viewModel.userSeconds)
-                StatTile(title: "Others spoke", value: viewModel.totalSeconds - viewModel.userSeconds)
-                StatTile(title: "Total speech", value: viewModel.totalSeconds)
+                StatTile(title: "You spoke", value: String(format: "%.1fs", viewModel.userSeconds))
+                StatTile(title: "Others spoke", value: String(format: "%.1fs", viewModel.totalSeconds - viewModel.userSeconds))
+                StatTile(title: "Total speech", value: String(format: "%.1fs", viewModel.totalSeconds))
             }
             Text("Silence is not counted — only time when someone is speaking")
                 .font(.caption2)
@@ -128,6 +144,9 @@ struct TrackingView: View {
             if viewModel.isTracking {
                 Button {
                     viewModel.stopTracking()
+                    // Offer to save the finished run; nil means nothing worth
+                    // saving was captured (no speech), so just stop.
+                    pendingDraft = viewModel.makeDraft()
                 } label: {
                     Label("Stop Tracking", systemImage: "stop.fill")
                         .frame(maxWidth: .infinity)
@@ -176,23 +195,5 @@ struct TrackingView: View {
             }
         }
         .font(.subheadline)
-    }
-}
-
-private struct StatTile: View {
-    let title: String
-    let value: Double
-
-    var body: some View {
-        VStack(spacing: 4) {
-            Text(String(format: "%.1fs", value))
-                .font(.headline.monospacedDigit())
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 10)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
     }
 }
