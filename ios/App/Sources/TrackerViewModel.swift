@@ -23,13 +23,20 @@ final class TrackerViewModel: ObservableObject {
     private var trackingStart: Date?
     private var chunkOutcomes: [ChunkOutcome] = []
 
+    // Async analysis pipeline: the capture callback yields drained chunks into
+    // this stream; a single consumer scores them in order with the selected
+    // matcher (which may be async neural inference).
+    private var matcher: (any SpeakerMatcher)?
+    private var chunkContinuation: AsyncStream<[Double]>.Continuation?
+    private var consumerTask: Task<Void, Never>?
+
     init(capture: AudioCapture) {
         self.capture = capture
     }
 
     /// Start the microphone; runs the level meter while idle and analyzes
-    /// chunks whenever tracking is on.
-    func startMonitoring(profile: VoiceProfile) async {
+    /// chunks with `matcher` whenever tracking is on.
+    func startMonitoring(matcher: any SpeakerMatcher) async {
         guard await AudioCapture.requestPermission() else {
             errorMessage = AudioCaptureError.permissionDenied.errorDescription
             return
@@ -38,42 +45,50 @@ final class TrackerViewModel: ObservableObject {
         // callback; starting now would steal the capture from its successor.
         guard !Task.isCancelled else { return }
 
+        self.matcher = matcher
+
+        // Single-consumer pipeline: chunks are scored one at a time in arrival
+        // order, so results apply in order even though matching is async. The
+        // 2 s chunk cadence is far longer than inference, so nothing backs up.
+        let (stream, continuation) = AsyncStream<[Double]>.makeStream()
+        chunkContinuation = continuation
+        consumerTask?.cancel()
+        consumerTask = Task { [weak self] in
+            for await chunk in stream {
+                guard let self else { break }
+                guard let matcher = self.matcher else { continue }
+                let result = await Self.analyze(chunk, matcher: matcher)
+                self.apply(result)
+            }
+        }
+
         do {
             try capture.start(owner: self, onFailure: { [weak self] error in
                 Task { @MainActor in
                     self?.errorMessage = "Microphone stopped: \(error.localizedDescription)"
                 }
-            }) { [weak self] samples in
+            }) { [weak self, continuation] samples in
+                // We are on the capture queue. `sink` is thread-safe; drained
+                // chunks go to the async consumer, and the idle level meter
+                // hops to main to publish.
                 guard let self else { return }
-                // We are on the capture queue: do the analysis here and hop
-                // to the main queue (FIFO, unlike unstructured Tasks) only
-                // to publish.
                 let tracking = self.sink.isCollecting
-                let level = tracking ? 0 : VoiceMatcher.meterLevel(samples)
                 self.sink.ingest(samples)
 
-                var results: [ChunkResult] = []
-                while let chunk = self.sink.drain(self.chunkSampleCount) {
-                    results.append(Self.analyze(chunk, profile: profile))
-                }
-
-                // While tracking, the level meter is not rendered — publish
-                // only when a chunk finished, so the chart-bearing view body
-                // is invalidated once per chunk, not per audio buffer.
-                guard !tracking || !results.isEmpty else { return }
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated {
-                        if !tracking {
-                            self.level = level
-                        }
-                        for result in results {
-                            self.apply(result)
-                        }
+                if tracking {
+                    while let chunk = self.sink.drain(self.chunkSampleCount) {
+                        continuation.yield(chunk)
+                    }
+                } else {
+                    let level = VoiceMatcher.meterLevel(samples)
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated { self.level = level }
                     }
                 }
             }
         } catch {
             errorMessage = error.localizedDescription
+            continuation.finish()
         }
     }
 
@@ -81,6 +96,10 @@ final class TrackerViewModel: ObservableObject {
         capture.stop(owner: self)
         sink.setCollecting(false)
         isTracking = false
+        chunkContinuation?.finish()
+        chunkContinuation = nil
+        consumerTask?.cancel()
+        consumerTask = nil
     }
 
     func startTracking() {
@@ -130,13 +149,13 @@ final class TrackerViewModel: ObservableObject {
         let confidence: Double
     }
 
-    nonisolated private static func analyze(_ chunk: [Double], profile: VoiceProfile) -> ChunkResult {
+    nonisolated private static func analyze(_ chunk: [Double], matcher: any SpeakerMatcher) async -> ChunkResult {
         let rms = VoiceMatcher.rms(chunk)
         let peak = chunk.reduce(0.0) { max($0, abs($1)) }
         guard rms > VoiceMatcher.speechGateRMS else {
             return ChunkResult(rms: rms, peak: peak, isSpeech: false, isUser: false, confidence: 0)
         }
-        let match = VoiceMatcher.match(chunk, profile: profile)
+        let match = await matcher.match(chunk)
         return ChunkResult(
             rms: rms, peak: peak, isSpeech: true,
             isUser: match.isMatch, confidence: match.confidence

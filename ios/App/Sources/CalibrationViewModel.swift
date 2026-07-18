@@ -95,9 +95,12 @@ final class CalibrationViewModel: ObservableObject {
         let audio = recordedAudio
         Task.detached(priority: .userInitiated) {
             let profile = VoiceMatcher.createProfile(audio)
+            // Neural enrollment is best-effort — if it fails, we still save the
+            // GMM profile and tracking falls back to it.
+            let neural = try? await NeuralVoiceEnroller.enroll(audio)
             await MainActor.run {
                 do {
-                    try model.save(profile)
+                    try model.save(profile, neural: neural)
                 } catch {
                     self.errorMessage = "Could not save the profile: \(error.localizedDescription)"
                     self.phase = .recorded
