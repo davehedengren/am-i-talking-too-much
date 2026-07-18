@@ -45,3 +45,8 @@ targets:
         SWIFT_VERSION: "5.9"
         ENABLE_USER_SCRIPT_SANDBOXING: true
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # Device code signing — persisted here so `xcodegen generate` doesn't
+        # reset the team. Team IDs are not secret (they ship in every app's
+        # embedded profile); move to a gitignored xcconfig if you'd rather.
+        DEVELOPMENT_TEAM: G789J4SKQQ
+        CODE_SIGN_STYLE: Automatic
