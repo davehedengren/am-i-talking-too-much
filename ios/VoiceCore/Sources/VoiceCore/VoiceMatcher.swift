@@ -48,21 +48,34 @@ public enum VoiceMatcher {
         profile: VoiceProfile,
         sampleRate: Int = sampleRate
     ) -> (isMatch: Bool, confidence: Double) {
-        guard rms(audio) >= minimumRMS else {
+        guard let averageScore = matchScore(audio, profile: profile, sampleRate: sampleRate) else {
             return (false, 0)
+        }
+        let margin = averageScore - profile.thresholdScore
+        let confidence = 1 / (1 + exp(-0.5 * margin))
+        return (margin > 0, confidence)
+    }
+
+    /// The raw average log-likelihood of a segment under the profile, or nil
+    /// when the segment is gated (too quiet, too short, or a dimension
+    /// mismatch). Exposed so the app can log score-vs-threshold diagnostics.
+    public static func matchScore(
+        _ audio: [Double],
+        profile: VoiceProfile,
+        sampleRate: Int = sampleRate
+    ) -> Double? {
+        guard rms(audio) >= minimumRMS else {
+            return nil
         }
 
         let features = MFCC.extract(audio, sampleRate: sampleRate, numMFCC: numCoefficients)
         // Too few frames to judge, or a profile trained with a different
         // feature dimension (scoring it would index out of range).
         guard features.count >= 5, features[0].count == profile.dimension else {
-            return (false, 0)
+            return nil
         }
 
-        let averageScore = mean(profile.gmm.scoreSamples(features))
-        let margin = averageScore - profile.thresholdScore
-        let confidence = 1 / (1 + exp(-0.5 * margin))
-        return (margin > 0, confidence)
+        return mean(profile.gmm.scoreSamples(features))
     }
 
     /// Root-mean-square amplitude.

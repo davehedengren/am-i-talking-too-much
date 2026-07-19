@@ -147,18 +147,20 @@ final class TrackerViewModel: ObservableObject {
         let isSpeech: Bool
         let isUser: Bool
         let confidence: Double
+        let matchInfo: String
     }
 
     nonisolated private static func analyze(_ chunk: [Double], matcher: any SpeakerMatcher) async -> ChunkResult {
         let rms = VoiceMatcher.rms(chunk)
         let peak = chunk.reduce(0.0) { max($0, abs($1)) }
         guard rms > VoiceMatcher.speechGateRMS else {
-            return ChunkResult(rms: rms, peak: peak, isSpeech: false, isUser: false, confidence: 0)
+            return ChunkResult(rms: rms, peak: peak, isSpeech: false, isUser: false, confidence: 0, matchInfo: "")
         }
         let match = await matcher.match(chunk)
         return ChunkResult(
             rms: rms, peak: peak, isSpeech: true,
-            isUser: match.isMatch, confidence: match.confidence
+            isUser: match.isMatch, confidence: match.confidence,
+            matchInfo: match.debugInfo
         )
     }
 
@@ -176,8 +178,8 @@ final class TrackerViewModel: ObservableObject {
                 userSeconds += VoiceMatcher.chunkSeconds
             }
             percentageHistory.append(percentage)
-            entry += String(format: " | SPEECH | gmm: %.2f | IsYou: %@",
-                            result.confidence, result.isUser ? "true" : "false")
+            entry += String(format: " | SPEECH | %@ | conf %.2f | IsYou: %@",
+                            result.matchInfo, result.confidence, result.isUser ? "true" : "false")
         } else {
             entry += " | (silence)"
         }
