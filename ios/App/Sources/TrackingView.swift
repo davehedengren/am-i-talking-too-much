@@ -49,13 +49,10 @@ struct TrackingView: View {
                         Text("Audio Level")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
-                        LevelMeterView(level: viewModel.level)
+                        LiveLevelMeter(level: viewModel.liveLevel)
                     }
                 } else {
-                    let matcherName = (model.useNeuralMatching && model.neuralProfile != nil) ? "Neural" : "Classic"
-                    Label("Listening (\(matcherName))… speak naturally!", systemImage: "mic.fill")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    liveFeedback
                 }
 
                 debugSection
@@ -91,17 +88,58 @@ struct TrackingView: View {
             }
             .environmentObject(history)
         }
-        // Re-runs when the neural/GMM toggle changes so you can A/B mid-session
-        // without leaving the screen.
+        // Idempotent: re-runs on appear and when the neural/GMM toggle flips.
+        // Returning from a pushed screen mid-session is a no-op; a toggle flip
+        // swaps the matcher without ending the session.
         .task(id: model.useNeuralMatching) {
-            viewModel.stopMonitoring()
             if let matcher = model.activeMatcher() {
-                await viewModel.startMonitoring(matcher: matcher)
+                let isNeural = model.useNeuralMatching && model.neuralProfile != nil
+                await viewModel.ensureMonitoring(matcher: matcher, isNeural: isNeural)
             }
         }
         .onDisappear {
-            viewModel.stopMonitoring()
+            // Keep the mic alive while tracking (History push, backgrounding —
+            // the audio background mode covers it); stop only an idle meter.
+            if !viewModel.isTracking {
+                viewModel.stopMonitoring()
+            }
         }
+    }
+
+    /// Live proof the pipeline is working: audio-reactive meter + the last
+    /// chunk's classification.
+    private var liveFeedback: some View {
+        let matcherName = (model.useNeuralMatching && model.neuralProfile != nil) ? "Neural" : "Classic"
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Listening (\(matcherName))", systemImage: "mic.fill")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                outcomeChip
+            }
+            LiveLevelMeter(level: viewModel.liveLevel)
+        }
+    }
+
+    @ViewBuilder
+    private var outcomeChip: some View {
+        let (text, color): (String, Color) = switch viewModel.lastOutcome {
+        case .you: ("You", .green)
+        case .others: ("Others", .blue)
+        case .silence: ("quiet", .gray)
+        case nil: ("…", .gray)
+        }
+        HStack(spacing: 6) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text(text)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(color)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(color.opacity(0.12), in: Capsule())
+        .animation(.easeInOut(duration: 0.25), value: viewModel.lastOutcome)
     }
 
     private var percentageHeader: some View {
@@ -177,6 +215,16 @@ struct TrackingView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
+        }
+    }
+
+    /// Observes only the live level, so ~10 Hz meter updates re-render this
+    /// tiny view instead of the whole chart-bearing screen.
+    private struct LiveLevelMeter: View {
+        @ObservedObject var level: TrackerViewModel.LiveLevel
+
+        var body: some View {
+            LevelMeterView(level: level.value)
         }
     }
 

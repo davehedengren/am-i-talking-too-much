@@ -17,7 +17,7 @@ struct SpeakingBucket: Codable, Identifiable {
 
 /// Per-chunk classification recorded while tracking. Each chunk covers
 /// `VoiceMatcher.chunkSeconds` of audio.
-enum ChunkOutcome: Codable {
+enum ChunkOutcome: Codable, Equatable {
     case you
     case others
     case silence

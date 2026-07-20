@@ -19,16 +19,14 @@ findings from field tests at the bottom.
 
 ## 1. Correctness / UX
 
-- [ ] **Tracking silently dies on navigation.** Pushing History or flipping the
-      matcher toggle calls `stopMonitoring()` (`TrackingView` `.task(id:)` /
-      `.onDisappear`) — browsing history mid-party kills the session with no
-      warning. Keep tracking alive across navigation, or confirm before stopping.
-- [ ] **Live "it's working" indicator while tracking.** Today there's only a
-      static "Listening…" label between 2 s updates. Plan: (a) live
-      audio-reactive level meter (publish a throttled level during tracking,
-      isolated in its own small view so the chart doesn't re-render per buffer),
-      plus (b) a per-chunk pulse chip — You (green) / Others (blue) / quiet
-      (gray) — proving the analysis pipeline is running.
+- [x] **Tracking silently dies on navigation** → `ensureMonitoring(matcher:isNeural:)`
+      is idempotent: History pushes are a no-op mid-session, the neural toggle
+      swaps the matcher without resetting totals, and `.onDisappear` only stops
+      an idle meter (background audio mode keeps the mic alive while tracking).
+- [x] **Live "it's working" indicator while tracking** → audio-reactive level
+      meter runs during tracking (`LiveLevel` isolated in its own observable so
+      ~10 Hz updates re-render only the meter subview), plus a per-chunk chip:
+      You (green) / Others (blue) / quiet (gray).
 - [x] **Adaptive speech gate** (`NoiseFloor.swift`): rolling ambient-noise
       floor replaces the fixed `speechGateRMS = 0.005`, which read real-device
       speech (no AGC in `.measurement` mode) as silence and would have counted
@@ -69,9 +67,10 @@ findings from field tests at the bottom.
 
 ## 5. Product ideas
 
-- [ ] **On-phone haptic nudge** — discreet vibration when your share stays over
-      ~55% for a few consecutive minutes. The app's core purpose, made
-      real-time; no Watch required.
+- [x] **On-phone haptic nudge** (first cut) — warning haptic when your share
+      is over 55% with ≥60 s of speech accumulated, at most every 2 min
+      (`TrackerViewModel.nudgeIfDominating`). Foreground only; constants
+      tunable. Later: sustained-window logic, a setting to disable, Watch tap.
 - [ ] **History aggregates/trends** — average share across events, trend over
       time, best/worst events. Small header section on `HistoryListView`.
 - [ ] **Edit session title after save**; currently title is only set in the
