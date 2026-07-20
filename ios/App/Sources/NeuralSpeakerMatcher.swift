@@ -13,9 +13,9 @@ actor NeuralSpeakerMatcher: SpeakerMatcher {
     }
 
     func match(_ audio: [Double]) async -> MatchResult {
-        guard VoiceMatcher.rms(audio) >= VoiceMatcher.minimumRMS else {
-            return MatchResult(isMatch: false, confidence: 0, debugInfo: "neural gated (quiet)")
-        }
+        // No RMS gate here: the tracker's adaptive speech gate already decided
+        // this chunk contains speech; a second fixed gate would silently bias
+        // quiet speech toward "others".
         guard let embedding = try? await NeuralVoiceEmbedder.embedding(audio) else {
             return MatchResult(isMatch: false, confidence: 0, debugInfo: "neural: EMBED FAILED")
         }

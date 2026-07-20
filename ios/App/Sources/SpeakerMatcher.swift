@@ -22,8 +22,11 @@ struct GMMSpeakerMatcher: SpeakerMatcher {
     let profile: VoiceProfile
 
     func match(_ audio: [Double]) async -> MatchResult {
-        guard let score = VoiceMatcher.matchScore(audio, profile: profile) else {
-            return MatchResult(isMatch: false, confidence: 0, debugInfo: "gmm gated (quiet/short)")
+        // gateRMS 0: the tracker already applied its adaptive speech gate, so a
+        // second fixed gate here would recreate the dead band where quiet
+        // speech could only ever count as "others".
+        guard let score = VoiceMatcher.matchScore(audio, profile: profile, gateRMS: 0) else {
+            return MatchResult(isMatch: false, confidence: 0, debugInfo: "gmm gated (short/dim)")
         }
         // Keep in lockstep with VoiceMatcher.match: sigmoid(0.5 * margin).
         let margin = score - profile.thresholdScore

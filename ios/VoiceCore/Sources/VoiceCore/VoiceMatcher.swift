@@ -59,12 +59,16 @@ public enum VoiceMatcher {
     /// The raw average log-likelihood of a segment under the profile, or nil
     /// when the segment is gated (too quiet, too short, or a dimension
     /// mismatch). Exposed so the app can log score-vs-threshold diagnostics.
+    /// `gateRMS` defaults to the parity constant; callers that already applied
+    /// their own speech gate can pass 0 so quiet-but-real speech still scores
+    /// instead of auto-counting as "not you".
     public static func matchScore(
         _ audio: [Double],
         profile: VoiceProfile,
-        sampleRate: Int = sampleRate
+        sampleRate: Int = sampleRate,
+        gateRMS: Double = minimumRMS
     ) -> Double? {
-        guard rms(audio) >= minimumRMS else {
+        guard rms(audio) >= gateRMS else {
             return nil
         }
 

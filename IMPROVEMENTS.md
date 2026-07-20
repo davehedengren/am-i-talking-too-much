@@ -29,11 +29,14 @@ findings from field tests at the bottom.
       isolated in its own small view so the chart doesn't re-render per buffer),
       plus (b) a per-chunk pulse chip — You (green) / Others (blue) / quiet
       (gray) — proving the analysis pipeline is running.
-- [ ] **Adaptive speech gate for loud venues.** `speechGateRMS = 0.005` is
-      absolute; party background noise exceeds it constantly, so music/chatter
-      counts as speech and dilutes the percentage. Track a rolling ambient noise
-      floor and gate relative to it, or use SoundAnalysis
-      (`SNClassifySoundRequest`) to detect actual speech.
+- [x] **Adaptive speech gate** (`NoiseFloor.swift`): rolling ambient-noise
+      floor replaces the fixed `speechGateRMS = 0.005`, which read real-device
+      speech (no AGC in `.measurement` mode) as silence and would have counted
+      party music as speech. Also removed the matcher-side `minimumRMS = 0.01`
+      second gate that created a dead band (0.005–0.01) where quiet speech
+      could only ever count as "others". Constants (`speechFactor` 2.5, floor
+      creep 5%/chunk) are first-cut — tune from the `Gate:` values now in the
+      debug log. Follow-up option: SoundAnalysis speech classifier.
 - [ ] **Crash/force-quit loses the whole session.** `makeDraft()` only runs on
       Stop. Autosave a recovery draft every few minutes; offer to restore on
       next launch.
@@ -94,3 +97,8 @@ findings from field tests at the bottom.
 - 2026-07-18: location resolved as "unknown" → fixed (auth race, PR #5).
 - 2026-07-18: "You spoke" 0 s after neural merge → diagnostics in PR #7, root
   cause TBD (see section 0).
+- 2026-07-20: speech read as "(silence)" on device while calibration meter
+  moved fine → fixed thresholds didn't fit real-device levels (`.measurement`
+  mode has no AGC). Adaptive noise-floor gate + dead-band removal shipped;
+  watch `RMS`/`Gate` debug lines to tune `NoiseFloor` constants. Likely also
+  the root cause of (or a contributor to) the 0 s issue above.
