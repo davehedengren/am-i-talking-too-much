@@ -38,6 +38,12 @@ findings from field tests at the bottom.
 - [ ] **Crash/force-quit loses the whole session.** `makeDraft()` only runs on
       Stop. Autosave a recovery draft every few minutes; offer to restore on
       next launch.
+- [ ] **Temporal smoothing of chunk decisions.** Speaker turns are continuous:
+      an isolated "Others" chunk inside a run of "You" chunks is almost always
+      wrong. Median-of-3 (or hysteresis) over the speech-chunk decision
+      sequence would clean residual flips on both matchers. Next lever if
+      voiced-trimming alone doesn't reach ~95% solo accuracy; costs ~one chunk
+      of attribution latency.
 
 ## 2. Performance / battery
 
@@ -101,3 +107,10 @@ findings from field tests at the bottom.
   mode has no AGC). Adaptive noise-floor gate + dead-band removal shipped;
   watch `RMS`/`Gate` debug lines to tune `NoiseFloor` constants. Likely also
   the root cause of (or a contributor to) the 0 s issue above.
+- 2026-07-20: solo test showed ~80% of own speech attributed as "You" on BOTH
+  matchers — identical rates pointed upstream of the matchers: clock-cut 2 s
+  chunks straddling pauses were scored whole, and the silent tail diluted the
+  score below threshold. Fix: `VoicedTrim` scores only the voiced frames
+  (≥1.05 s required, else the chunk is dropped as too ambiguous to attribute).
+  `Voiced:` % now in the debug log. Deliberately did NOT loosen thresholds —
+  false-accept side is unmeasured until the group test.
