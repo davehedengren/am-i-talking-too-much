@@ -1,15 +1,26 @@
 import Foundation
+import UIKit
 import VoiceCore
 
 @MainActor
 final class TrackerViewModel: ObservableObject {
+    /// Live mic level, isolated in its own observable so its ~10 Hz updates
+    /// re-render only the small meter view, never the chart-bearing screen.
+    final class LiveLevel: ObservableObject {
+        @Published var value: Double = 0
+    }
+
     @Published var isTracking = false
     @Published var userSeconds = 0.0
     @Published var totalSeconds = 0.0
     @Published var percentageHistory: [Double] = []
-    @Published var level: Double = 0
     @Published var debugLog: [String] = []
     @Published var errorMessage: String?
+
+    /// The last chunk's classification, for the live "is it working" chip.
+    @Published var lastOutcome: ChunkOutcome?
+
+    let liveLevel = LiveLevel()
 
     var percentage: Double {
         totalSeconds > 0 ? userSeconds / totalSeconds * 100 : 0
@@ -73,8 +84,9 @@ final class TrackerViewModel: ObservableObject {
                 }
             }) { [weak self, continuation] samples in
                 // We are on the capture queue. `sink` is thread-safe; drained
-                // chunks go to the async consumer, and the idle level meter
-                // hops to main to publish.
+                // chunks go to the async consumer. The live level publishes on
+                // every buffer — but only into `liveLevel`, whose updates
+                // re-render just the meter subview.
                 guard let self else { return }
                 let tracking = self.sink.isCollecting
                 self.sink.ingest(samples)
@@ -83,11 +95,11 @@ final class TrackerViewModel: ObservableObject {
                     while let chunk = self.sink.drain(self.chunkSampleCount) {
                         continuation.yield(chunk)
                     }
-                } else {
-                    let level = VoiceMatcher.meterLevel(samples)
-                    DispatchQueue.main.async {
-                        MainActor.assumeIsolated { self.level = level }
-                    }
+                }
+
+                let level = VoiceMatcher.meterLevel(samples)
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { self.liveLevel.value = level }
                 }
             }
         } catch {
@@ -95,6 +107,27 @@ final class TrackerViewModel: ObservableObject {
             continuation.finish()
         }
     }
+
+    /// Idempotent entry point for the tracking screen: starts capture if it
+    /// isn't running, swaps the matcher without ending the session when the
+    /// user flips the neural toggle, and does nothing when returning from a
+    /// pushed screen mid-session — navigation must not kill tracking.
+    func ensureMonitoring(matcher: any SpeakerMatcher, isNeural: Bool) async {
+        if capture.isRunning, self.matcher != nil, activeMatcherIsNeural == isNeural {
+            return
+        }
+        let wasTracking = isTracking
+        stopMonitoring()
+        activeMatcherIsNeural = isNeural
+        await startMonitoring(matcher: matcher)
+        if wasTracking {
+            // Matcher swap mid-session: keep counting, don't reset totals.
+            sink.setCollecting(true)
+            isTracking = true
+        }
+    }
+
+    private var activeMatcherIsNeural: Bool?
 
     func stopMonitoring() {
         capture.stop(owner: self)
@@ -143,6 +176,27 @@ final class TrackerViewModel: ObservableObject {
         debugLog = []
         chunkOutcomes = []
         trackingStart = nil
+        lastOutcome = nil
+        lastNudge = nil
+    }
+
+    // MARK: - Haptic nudge
+
+    /// Discreet "you're dominating" wrist-tap replacement: a warning haptic
+    /// when your share stays over the red band, at most once per interval.
+    /// Requires some accumulated speech so a hot first minute doesn't buzz.
+    static let nudgePercentage = 55.0
+    static let nudgeMinimumSpeechSeconds = 60.0
+    static let nudgeInterval: TimeInterval = 120
+    private var lastNudge: Date?
+
+    private func nudgeIfDominating() {
+        guard percentage > Self.nudgePercentage,
+              totalSeconds >= Self.nudgeMinimumSpeechSeconds,
+              Date().timeIntervalSince(lastNudge ?? .distantPast) > Self.nudgeInterval
+        else { return }
+        lastNudge = Date()
+        UINotificationFeedbackGenerator().notificationOccurred(.warning)
     }
 
     struct ChunkResult {
@@ -174,7 +228,9 @@ final class TrackerViewModel: ObservableObject {
 
         // Record one timeline entry per chunk (including silence) so saved-event
         // buckets keep accurate time positions.
-        chunkOutcomes.append(result.isSpeech ? (result.isUser ? .you : .others) : .silence)
+        let outcome: ChunkOutcome = result.isSpeech ? (result.isUser ? .you : .others) : .silence
+        chunkOutcomes.append(outcome)
+        lastOutcome = outcome
 
         var entry = String(format: "RMS: %.4f | Gate: %.4f | Max: %.4f", result.rms, result.gate, result.peak)
         if result.isSpeech {
@@ -183,6 +239,7 @@ final class TrackerViewModel: ObservableObject {
                 userSeconds += VoiceMatcher.chunkSeconds
             }
             percentageHistory.append(percentage)
+            nudgeIfDominating()
             entry += String(format: " | SPEECH | %@ | conf %.2f | IsYou: %@",
                             result.matchInfo, result.confidence, result.isUser ? "true" : "false")
         } else {
