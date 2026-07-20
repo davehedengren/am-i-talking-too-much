@@ -1,9 +1,15 @@
 import Foundation
 
 /// Minimal 16-bit PCM mono WAV encoder, used to play back the calibration
-/// recording.
+/// recording and to export ground-truth recordings.
 public enum WavCodec {
     public static func encode(_ samples: [Double], sampleRate: Int = VoiceMatcher.sampleRate) -> Data {
+        encode(pcm16: samples.map(quantize), sampleRate: sampleRate)
+    }
+
+    /// Same container for already-quantized samples (the ground-truth recorder
+    /// stores Int16 so long recordings stay small in memory).
+    public static func encode(pcm16 samples: [Int16], sampleRate: Int = VoiceMatcher.sampleRate) -> Data {
         let dataSize = samples.count * 2
         var data = Data(capacity: 44 + dataSize)
 
@@ -23,10 +29,14 @@ public enum WavCodec {
         data.append(contentsOf: Array("data".utf8))
         appendLittleEndian(&data, UInt32(dataSize))
         for sample in samples {
-            let clamped = max(-1.0, min(1.0, sample))
-            appendLittleEndian(&data, UInt16(bitPattern: Int16((clamped * 32767).rounded())))
+            appendLittleEndian(&data, UInt16(bitPattern: sample))
         }
         return data
+    }
+
+    /// Clamp and quantize one sample to 16-bit PCM.
+    public static func quantize(_ sample: Double) -> Int16 {
+        Int16((max(-1.0, min(1.0, sample)) * 32767).rounded())
     }
 
     private static func appendLittleEndian<T: FixedWidthInteger>(_ data: inout Data, _ value: T) {
