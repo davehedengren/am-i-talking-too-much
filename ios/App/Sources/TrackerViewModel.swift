@@ -203,6 +203,7 @@ final class TrackerViewModel: ObservableObject {
         let rms: Double
         let peak: Double
         let gate: Double
+        let voicedFraction: Double
         let isSpeech: Bool
         let isUser: Bool
         let confidence: Double
@@ -212,12 +213,19 @@ final class TrackerViewModel: ObservableObject {
     nonisolated private static func analyze(_ chunk: [Double], matcher: any SpeakerMatcher, gateRMS: Double) async -> ChunkResult {
         let rms = VoiceMatcher.rms(chunk)
         let peak = chunk.reduce(0.0) { max($0, abs($1)) }
-        guard rms > gateRMS else {
-            return ChunkResult(rms: rms, peak: peak, gate: gateRMS, isSpeech: false, isUser: false, confidence: 0, matchInfo: "")
+        // Score only the voiced part of the chunk: clock-cut chunks straddle
+        // pauses, and whole-chunk scoring diluted by silence was rejecting
+        // ~20% of the calibrated speaker's own chunks on both matchers.
+        let (scoringAudio, voicedFraction) = VoicedTrim.audioForMatching(
+            chunk, gate: gateRMS, sampleRate: AudioCapture.sampleRate
+        )
+        guard let scoringAudio else {
+            return ChunkResult(rms: rms, peak: peak, gate: gateRMS, voicedFraction: voicedFraction,
+                               isSpeech: false, isUser: false, confidence: 0, matchInfo: "")
         }
-        let match = await matcher.match(chunk)
+        let match = await matcher.match(scoringAudio)
         return ChunkResult(
-            rms: rms, peak: peak, gate: gateRMS, isSpeech: true,
+            rms: rms, peak: peak, gate: gateRMS, voicedFraction: voicedFraction, isSpeech: true,
             isUser: match.isMatch, confidence: match.confidence,
             matchInfo: match.debugInfo
         )
@@ -232,7 +240,8 @@ final class TrackerViewModel: ObservableObject {
         chunkOutcomes.append(outcome)
         lastOutcome = outcome
 
-        var entry = String(format: "RMS: %.4f | Gate: %.4f | Max: %.4f", result.rms, result.gate, result.peak)
+        var entry = String(format: "RMS: %.4f | Gate: %.4f | Voiced: %d%% | Max: %.4f",
+                           result.rms, result.gate, Int((result.voicedFraction * 100).rounded()), result.peak)
         if result.isSpeech {
             totalSeconds += VoiceMatcher.chunkSeconds
             if result.isUser {
