@@ -82,6 +82,8 @@ findings from field tests at the bottom.
 - [ ] **Edit session title after save**; currently title is only set in the
       save sheet.
 - [ ] **Export/share a session** (image of the chart or CSV).
+- [ ] **In-app About screen** mirroring the "why letting others speak matters"
+      research section of `HOW_IT_WORKS.md` (Settings → About).
 - [ ] **Watch companion (later)** — glanceable live share + wrist haptic nudge
       via WatchConnectivity; phone stays the microphone and brain. (Watch as
       the mic was investigated and rejected: no long-running background audio
