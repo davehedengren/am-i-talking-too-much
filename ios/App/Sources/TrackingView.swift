@@ -78,7 +78,17 @@ struct TrackingView: View {
                 }
             }
         }
-        .sheet(isPresented: $showSettings) {
+        .sheet(isPresented: $showSettings, onDismiss: {
+            // The ground-truth recorder (reached via Settings) takes over the
+            // shared capture; re-arm the tracker's monitoring when the sheet
+            // closes. No-op if capture is still ours.
+            Task {
+                if let matcher = model.activeMatcher() {
+                    let isNeural = model.useNeuralMatching && model.neuralProfile != nil
+                    await viewModel.ensureMonitoring(matcher: matcher, isNeural: isNeural)
+                }
+            }
+        }) {
             SettingsView()
                 .environmentObject(model)
         }

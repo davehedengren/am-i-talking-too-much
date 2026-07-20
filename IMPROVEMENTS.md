@@ -6,11 +6,17 @@ findings from field tests at the bottom.
 ## 0. Active investigation
 
 - [ ] **Annotated eval harness (do before any further matcher/gate tuning).**
-      User records a calibration clip plus a conversation with known
-      who-spoke-when labels; a macOS command-line harness decodes the audio,
-      replays the exact pipeline (NoiseFloor → gate → matchers, both engines,
-      any variant under test), and scores each variant against the labels.
-      Turns tuning into measured experiments and doubles as a regression test.
+      Recording side SHIPPED: Settings → Diagnostics → **Ground Truth
+      Recorder** captures raw pipeline audio (exact tracker path: 16 kHz mono,
+      `.measurement`) with live Me/Others/Quiet/Unsure label taps, timestamped
+      on the audio clock. Sessions save to `Documents/GroundTruth/<timestamp>/`
+      (`audio.wav` + `labels.json`), shareable from the app and visible in
+      Files/Finder (`UIFileSharingEnabled`).
+      REMAINING: the macOS replay harness — decode a session, replay
+      NoiseFloor → gate → both matchers (plus any candidate variant:
+      contiguous-run trim, frame-level GMM scoring, threshold sweeps, temporal
+      smoothing), score each against labels (`unsure` excluded). Turns tuning
+      into measured experiments and doubles as a regression test.
 
 - [ ] **"You spoke" stuck at 0 s with neural matching** (found on-device 2026-07-18).
       Diagnostics landed in PR #7: the Debug Log now prints the raw decision per

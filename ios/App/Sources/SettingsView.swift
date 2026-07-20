@@ -46,7 +46,20 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Text("All analysis runs on this device. No audio is stored or sent anywhere — only speaking-time totals are kept, and only for the current session.")
+                    NavigationLink {
+                        GroundTruthView()
+                    } label: {
+                        Label("Ground Truth Recorder", systemImage: "waveform.badge.plus")
+                    }
+                    Text("Record a conversation with who-is-speaking labels to tune the voice matcher. Unlike tracking, this saves raw audio on this phone until you delete it.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("Diagnostics")
+                }
+
+                Section {
+                    Text("All analysis runs on this device. During tracking, no audio is stored or sent anywhere — only speaking-time totals are kept, and only for the current session.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 } header: {

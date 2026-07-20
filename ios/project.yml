@@ -35,6 +35,10 @@ targets:
           happened. It stays on your device and is never uploaded.
         UIBackgroundModes:
           - audio
+        # Expose Documents (ground-truth recordings) in the Files app and
+        # Finder so labeled sessions can be pulled off the phone easily.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
