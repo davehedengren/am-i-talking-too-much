@@ -1,0 +1,96 @@
+# iOS App — Improvement Backlog
+
+Prioritized notes from the 2026-07 review. Check items off as they land; add
+findings from field tests at the bottom.
+
+## 0. Active investigation
+
+- [ ] **"You spoke" stuck at 0 s with neural matching** (found on-device 2026-07-18).
+      Diagnostics landed in PR #7: the Debug Log now prints the raw decision per
+      speech chunk — `sim 0.912 thr 0.894` (neural) or `ll -18.3 thr -20.1`
+      (classic) — plus `EMBED FAILED` / `dim mismatch` / gate markers, and the
+      tracking screen shows which matcher is live.
+      **Next:** run a short session, read the `sim`/`thr` lines, then either
+      (a) tune `NeuralVoiceEnroller.marginFloor` (currently 0.08),
+      (b) fix the embedding path if `EMBED FAILED` appears, or
+      (c) conclude AudioFeaturePrint is not speaker-discriminative enough
+      (it's trained for sound classes, not speakers) and switch to a proper
+      speaker-embedding Core ML model (ECAPA-TDNN / x-vector).
+
+## 1. Correctness / UX
+
+- [ ] **Tracking silently dies on navigation.** Pushing History or flipping the
+      matcher toggle calls `stopMonitoring()` (`TrackingView` `.task(id:)` /
+      `.onDisappear`) — browsing history mid-party kills the session with no
+      warning. Keep tracking alive across navigation, or confirm before stopping.
+- [ ] **Live "it's working" indicator while tracking.** Today there's only a
+      static "Listening…" label between 2 s updates. Plan: (a) live
+      audio-reactive level meter (publish a throttled level during tracking,
+      isolated in its own small view so the chart doesn't re-render per buffer),
+      plus (b) a per-chunk pulse chip — You (green) / Others (blue) / quiet
+      (gray) — proving the analysis pipeline is running.
+- [ ] **Adaptive speech gate for loud venues.** `speechGateRMS = 0.005` is
+      absolute; party background noise exceeds it constantly, so music/chatter
+      counts as speech and dilutes the percentage. Track a rolling ambient noise
+      floor and gate relative to it, or use SoundAnalysis
+      (`SNClassifySoundRequest`) to detect actual speech.
+- [ ] **Crash/force-quit loses the whole session.** `makeDraft()` only runs on
+      Stop. Autosave a recovery draft every few minutes; offer to restore on
+      next launch.
+
+## 2. Performance / battery
+
+- [ ] **Temp WAV written to disk every 2 s** during neural tracking
+      (`NeuralVoiceEmbedder.windowEmbeddings`). Feed `AVAudioPCMBuffer`s in
+      memory via `AnyTemporalSequence` instead of `AudioReader.read(contentsOf:)`.
+- [ ] **Live chart grows unbounded.** `percentageHistory` gains a point per
+      speech chunk and the whole `Chart` re-renders every 2 s; hours-long
+      sessions accumulate thousands of marks. Decimate or window the live view
+      (saved sessions already bucket via `Session.buildBuckets`).
+
+## 3. Robustness
+
+- [ ] **`HistoryStore.persist()` swallows write errors** (`try?`). Surface a
+      one-time warning (e.g. disk full) instead of silently dropping sessions.
+- [ ] **Neural enrollment failure is quiet.** Settings now shows a warning
+      (PR #7), but calibration itself could tell the user "neural profile could
+      not be created" at save time.
+
+## 4. Testing / structure
+
+- [ ] **App target has zero tests.** `Session.buildBuckets`, enroller math, and
+      `SessionStore` have all had bugs caught only by ad-hoc `swiftc` runs.
+      Move pure logic into VoiceCore (or a new small `AppCore` SwiftPM package)
+      so `swift test` covers it headlessly; or add an app unit-test target to
+      `project.yml`.
+
+## 5. Product ideas
+
+- [ ] **On-phone haptic nudge** — discreet vibration when your share stays over
+      ~55% for a few consecutive minutes. The app's core purpose, made
+      real-time; no Watch required.
+- [ ] **History aggregates/trends** — average share across events, trend over
+      time, best/worst events. Small header section on `HistoryListView`.
+- [ ] **Edit session title after save**; currently title is only set in the
+      save sheet.
+- [ ] **Export/share a session** (image of the chart or CSV).
+- [ ] **Watch companion (later)** — glanceable live share + wrist haptic nudge
+      via WatchConnectivity; phone stays the microphone and brain. (Watch as
+      the mic was investigated and rejected: no long-running background audio
+      on watchOS, battery unrealistic.)
+
+## 6. Housekeeping
+
+- [x] Privacy manifest declares the UserDefaults required-reason API (CA92.1) — PR #7.
+- [x] Debug log labeled every score "gmm" regardless of matcher — PR #7.
+- [x] Active matcher visible while tracking ("Listening (Neural)…") — PR #7.
+- [ ] Stale local branches (`feat/ios-event-history`, `cleanup/code-review-fixes`,
+      `fix/speaker-embedding-auth-error`) and old open PR #2 — prune/close.
+- [ ] `CLAUDE.md` / `ios/README.md` don't yet describe the neural matcher,
+      event history, or the A/B toggle — update docs.
+
+## Field-test findings (append here)
+
+- 2026-07-18: location resolved as "unknown" → fixed (auth race, PR #5).
+- 2026-07-18: "You spoke" 0 s after neural merge → diagnostics in PR #7, root
+  cause TBD (see section 0).
