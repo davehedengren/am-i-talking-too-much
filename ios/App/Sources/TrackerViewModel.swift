@@ -54,10 +54,14 @@ final class TrackerViewModel: ObservableObject {
         chunkContinuation = continuation
         consumerTask?.cancel()
         consumerTask = Task { [weak self] in
+            // The gate adapts to the room: every chunk (speech or not) feeds
+            // the noise-floor estimate. Single consumer, so no races.
+            var noiseFloor = NoiseFloor()
             for await chunk in stream {
                 guard let self else { break }
                 guard let matcher = self.matcher else { continue }
-                let result = await Self.analyze(chunk, matcher: matcher)
+                noiseFloor.update(rms: VoiceMatcher.rms(chunk))
+                let result = await Self.analyze(chunk, matcher: matcher, gateRMS: noiseFloor.speechGate)
                 self.apply(result)
             }
         }
@@ -144,21 +148,22 @@ final class TrackerViewModel: ObservableObject {
     struct ChunkResult {
         let rms: Double
         let peak: Double
+        let gate: Double
         let isSpeech: Bool
         let isUser: Bool
         let confidence: Double
         let matchInfo: String
     }
 
-    nonisolated private static func analyze(_ chunk: [Double], matcher: any SpeakerMatcher) async -> ChunkResult {
+    nonisolated private static func analyze(_ chunk: [Double], matcher: any SpeakerMatcher, gateRMS: Double) async -> ChunkResult {
         let rms = VoiceMatcher.rms(chunk)
         let peak = chunk.reduce(0.0) { max($0, abs($1)) }
-        guard rms > VoiceMatcher.speechGateRMS else {
-            return ChunkResult(rms: rms, peak: peak, isSpeech: false, isUser: false, confidence: 0, matchInfo: "")
+        guard rms > gateRMS else {
+            return ChunkResult(rms: rms, peak: peak, gate: gateRMS, isSpeech: false, isUser: false, confidence: 0, matchInfo: "")
         }
         let match = await matcher.match(chunk)
         return ChunkResult(
-            rms: rms, peak: peak, isSpeech: true,
+            rms: rms, peak: peak, gate: gateRMS, isSpeech: true,
             isUser: match.isMatch, confidence: match.confidence,
             matchInfo: match.debugInfo
         )
@@ -171,7 +176,7 @@ final class TrackerViewModel: ObservableObject {
         // buckets keep accurate time positions.
         chunkOutcomes.append(result.isSpeech ? (result.isUser ? .you : .others) : .silence)
 
-        var entry = String(format: "RMS: %.4f | Max: %.4f", result.rms, result.peak)
+        var entry = String(format: "RMS: %.4f | Gate: %.4f | Max: %.4f", result.rms, result.gate, result.peak)
         if result.isSpeech {
             totalSeconds += VoiceMatcher.chunkSeconds
             if result.isUser {
