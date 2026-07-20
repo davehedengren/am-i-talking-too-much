@@ -27,13 +27,15 @@ See [`ios/README.md`](ios/README.md) for details.
 
 ## How It Works
 
-1. **Voice Calibration** — Record a 10-second sample of your voice. The app builds a GMM (Gaussian Mixture Model) profile from your MFCC features.
+1. **Voice Calibration** — Record a 10-second sample of your voice. The app builds a GMM (Gaussian Mixture Model) profile from your MFCC features (and, on iOS, a neural embedding profile as well).
 2. **Conversation Tracking** — The app listens in 2-second chunks, detects speech, and matches each chunk against your voice profile. You get a live percentage and color-coded feedback:
    - **Green** (< 40%) — Great listening
    - **Yellow** (40–55%) — Balanced
    - **Red** (> 55%) — Talking a lot
 
 Your voice profile is saved to `voice_profile.json` so you only calibrate once.
+
+For the full story — why balanced airtime matters (with research), wire-flow diagrams of the audio pipeline, both matchers, and the event history — see [`HOW_IT_WORKS.md`](HOW_IT_WORKS.md).
 
 ## Optional Features
 
