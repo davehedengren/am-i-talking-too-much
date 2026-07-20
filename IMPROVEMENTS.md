@@ -5,6 +5,13 @@ findings from field tests at the bottom.
 
 ## 0. Active investigation
 
+- [ ] **Annotated eval harness (do before any further matcher/gate tuning).**
+      User records a calibration clip plus a conversation with known
+      who-spoke-when labels; a macOS command-line harness decodes the audio,
+      replays the exact pipeline (NoiseFloor → gate → matchers, both engines,
+      any variant under test), and scores each variant against the labels.
+      Turns tuning into measured experiments and doubles as a regression test.
+
 - [ ] **"You spoke" stuck at 0 s with neural matching** (found on-device 2026-07-18).
       Diagnostics landed in PR #7: the Debug Log now prints the raw decision per
       speech chunk — `sim 0.912 thr 0.894` (neural) or `ll -18.3 thr -20.1`
@@ -116,3 +123,12 @@ findings from field tests at the bottom.
   (≥1.05 s required, else the chunk is dropped as too ambiguous to attribute).
   `Voiced:` % now in the debug log. Deliberately did NOT loosen thresholds —
   false-accept side is unmeasured until the group test.
+- 2026-07-20 (later): **splice-scoring REGRESSED solo accuracy to ~50–60%** —
+  reverted to whole-chunk scoring. Two mechanisms: (1) `NoiseFloor` v1 crept
+  +5%/chunk with no quiet chunks to pull it down, so a sustained monologue
+  ratcheted the gate to ~0.023 by minute two (above much speech) — replaced
+  with a windowed minimum over each chunk's quietest 100 ms frame, which
+  inter-word gaps anchor even mid-monologue; (2) splicing voiced frames
+  corrupts MFCC frames at the seams and mismatches profiles trained on
+  untrimmed calibration audio. Lesson recorded: no more blind pipeline tuning
+  — build the annotated eval harness first (section 0).

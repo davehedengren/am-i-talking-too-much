@@ -71,7 +71,10 @@ final class TrackerViewModel: ObservableObject {
             for await chunk in stream {
                 guard let self else { break }
                 guard let matcher = self.matcher else { continue }
-                noiseFloor.update(rms: VoiceMatcher.rms(chunk))
+                // Anchor the floor on the chunk's quietest 100 ms frame, not
+                // its overall RMS — inter-word gaps keep the estimate at the
+                // ambient level even during a sustained monologue.
+                noiseFloor.update(quietestFrameRMS: VoicedTrim.quietestFrameRMS(chunk))
                 let result = await Self.analyze(chunk, matcher: matcher, gateRMS: noiseFloor.speechGate)
                 self.apply(result)
             }
@@ -213,17 +216,16 @@ final class TrackerViewModel: ObservableObject {
     nonisolated private static func analyze(_ chunk: [Double], matcher: any SpeakerMatcher, gateRMS: Double) async -> ChunkResult {
         let rms = VoiceMatcher.rms(chunk)
         let peak = chunk.reduce(0.0) { max($0, abs($1)) }
-        // Score only the voiced part of the chunk: clock-cut chunks straddle
-        // pauses, and whole-chunk scoring diluted by silence was rejecting
-        // ~20% of the calibrated speaker's own chunks on both matchers.
-        let (scoringAudio, voicedFraction) = VoicedTrim.audioForMatching(
-            chunk, gate: gateRMS, sampleRate: AudioCapture.sampleRate
-        )
-        guard let scoringAudio else {
+        // Voiced fraction is a logged diagnostic only. Scoring spliced
+        // voiced-only audio regressed accuracy in the field (seam artifacts +
+        // profiles trained on untrimmed audio) — whole-chunk scoring is the
+        // measured-best baseline until the eval harness says otherwise.
+        let voicedFraction = VoicedTrim.trim(chunk, gate: gateRMS).fraction
+        guard rms > gateRMS else {
             return ChunkResult(rms: rms, peak: peak, gate: gateRMS, voicedFraction: voicedFraction,
                                isSpeech: false, isUser: false, confidence: 0, matchInfo: "")
         }
-        let match = await matcher.match(scoringAudio)
+        let match = await matcher.match(chunk)
         return ChunkResult(
             rms: rms, peak: peak, gate: gateRMS, voicedFraction: voicedFraction, isSpeech: true,
             isUser: match.isMatch, confidence: match.confidence,
