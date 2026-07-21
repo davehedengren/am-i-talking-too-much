@@ -12,11 +12,21 @@ findings from field tests at the bottom.
       on the audio clock. Sessions save to `Documents/GroundTruth/<timestamp>/`
       (`audio.wav` + `labels.json`), shareable from the app and visible in
       Files/Finder (`UIFileSharingEnabled`).
-      REMAINING: the macOS replay harness — decode a session, replay
-      NoiseFloor → gate → both matchers (plus any candidate variant:
-      contiguous-run trim, frame-level GMM scoring, threshold sweeps, temporal
-      smoothing), score each against labels (`unsure` excluded). Turns tuning
-      into measured experiments and doubles as a regression test.
+      Replay harness SHIPPED too: `tools/eval/run.sh <audio.wav> <labels.json>`
+      compiles the real pipeline sources (VoiceCore + NoiseFloor/VoicedTrim +
+      neural embedder) into a macOS binary, enrolls from the first long "me"
+      segment (excluded from scoring), replays every chunk, and reports score
+      distributions, confusion matrices, threshold sweeps (balanced-accuracy
+      and share-honest), and median-3 smoothing. Session data stays local
+      (`tools/eval/data/` is gitignored — raw conversation audio).
+- [ ] **Speaker-verification embedding (ECAPA-TDNN / x-vector via Core ML).**
+      First ground-truth session (2026-07-20) shows AudioFeaturePrint can't
+      fully separate speakers in the same room: me-sims 0.74–0.91 vs
+      others-sims 0.55–0.90 overlap heavily; best achievable balanced accuracy
+      ~82%, others-rejection only ~64% at full recall. Threshold tuning cannot
+      fix an overlapping distribution — a model trained specifically for
+      speaker verification is the measured next step. Validate via the harness
+      before shipping.
 
 - [ ] **"You spoke" stuck at 0 s with neural matching** (found on-device 2026-07-18).
       Diagnostics landed in PR #7: the Debug Log now prints the raw decision per
@@ -51,12 +61,11 @@ findings from field tests at the bottom.
 - [ ] **Crash/force-quit loses the whole session.** `makeDraft()` only runs on
       Stop. Autosave a recovery draft every few minutes; offer to restore on
       next launch.
-- [ ] **Temporal smoothing of chunk decisions.** Speaker turns are continuous:
-      an isolated "Others" chunk inside a run of "You" chunks is almost always
-      wrong. Median-of-3 (or hysteresis) over the speech-chunk decision
-      sequence would clean residual flips on both matchers. Next lever if
-      voiced-trimming alone doesn't reach ~95% solo accuracy; costs ~one chunk
-      of attribution latency.
+- [ ] **Temporal smoothing of chunk decisions.** MEASURED 2026-07-20 session:
+      median-of-3 did NOT help (balanced accuracy dropped slightly on both
+      matchers) — real conversational turns are often 1–4 s, shorter than the
+      smoothing window, so it blurs turn boundaries more than it fixes flips.
+      Revisit only with more labeled data and longer-turn sessions.
 
 ## 2. Performance / battery
 
@@ -113,6 +122,18 @@ findings from field tests at the bottom.
       event history, or the A/B toggle — update docs.
 
 ## Field-test findings (append here)
+
+- 2026-07-21: **first ground-truth evaluation** (114 s session, 2 speakers,
+  42 scored chunks, true share 21%). Neural clearly beats GMM: balanced 80%
+  vs 57% at calibrated thresholds; GMM me/others log-likelihoods are nearly
+  indistinguishable (medians −65.2 vs −67.3) while neural separates partially
+  (0.877 vs 0.695) with an overlap zone. Neural at calibrated threshold:
+  100% me-recall but only 61% others-rejection → predicted share 52% vs true
+  21% (overestimates in groups). The calibrated neural threshold is within
+  0.01 of the balanced-accuracy optimum, so tuning isn't the bottleneck — the
+  embedding is (see speaker-verification item). A share-honest threshold
+  (0.86) exists but overfits one session and sits above the enrollment
+  self-similarity mean; not shipped. Median-3 smoothing: no gain.
 
 - 2026-07-18: location resolved as "unknown" → fixed (auth race, PR #5).
 - 2026-07-18: "You spoke" 0 s after neural merge → diagnostics in PR #7, root
