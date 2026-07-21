@@ -1,0 +1,618 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Turn Annotator — Am I Talking Too Much?</title>
+<style>
+  :root {
+    --bg: #0F1317;
+    --panel: #171D24;
+    --line: #232B34;
+    --text: #E8EDF2;
+    --muted: #87929E;
+    --me: #3FD46E;
+    --others: #3D9BFF;
+    --quiet: #59626E;
+    --unsure: #FFA02E;
+    --playhead: #F4F7FA;
+    --wave-idle: #3A4450;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--line);
+  }
+  header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.01em; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  header .actions { margin-left: auto; display: flex; gap: 8px; }
+
+  button, label.filebtn {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font: 12.5px/1 -apple-system, sans-serif;
+    cursor: pointer;
+  }
+  button:hover, label.filebtn:hover { border-color: var(--muted); }
+  button:focus-visible, label.filebtn:focus-within {
+    outline: 2px solid var(--others);
+    outline-offset: 1px;
+  }
+  button.primary { border-color: var(--me); color: var(--me); }
+  button:disabled { opacity: 0.4; cursor: default; }
+  input[type="file"] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+
+  #stage { position: relative; margin: 16px 20px 0; }
+  #stage canvas { display: block; width: 100%; border-radius: 8px; }
+  #wave { background: var(--panel); height: 240px; }
+  #overlay { position: absolute; inset: 0; height: 240px; cursor: text; }
+  #empty {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 13px;
+    pointer-events: none;
+  }
+
+  #transport {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 20px;
+    flex-wrap: wrap;
+  }
+  #time { font: 15px var(--mono); min-width: 150px; }
+  #time .total { color: var(--muted); }
+  .tgroup { display: flex; gap: 6px; align-items: center; }
+  #rate { font: 12px var(--mono); color: var(--muted); min-width: 42px; text-align: center; }
+
+  #legend {
+    display: flex;
+    gap: 18px;
+    padding: 0 20px 10px;
+    color: var(--muted);
+    font-size: 12px;
+    flex-wrap: wrap;
+  }
+  #legend b {
+    font: 600 11px var(--mono);
+    color: var(--text);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 2px 6px;
+    margin-right: 5px;
+  }
+  .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+
+  #tablewrap { flex: 1; overflow-y: auto; padding: 0 20px 24px; }
+  table { border-collapse: collapse; width: 100%; max-width: 560px; }
+  th {
+    text-align: left;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 8px 10px 6px;
+    border-bottom: 1px solid var(--line);
+  }
+  td { padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  td.t { font-family: var(--mono); cursor: pointer; }
+  td.t:hover { color: var(--others); }
+  tr.selected td { background: #1D2731; }
+  td .del {
+    border: none; background: none; color: var(--muted);
+    cursor: pointer; font-size: 14px; padding: 0 4px;
+  }
+  td .del:hover { color: #FF6B6B; }
+  select {
+    background: var(--panel); color: var(--text);
+    border: 1px solid var(--line); border-radius: 4px;
+    font-size: 12.5px; padding: 3px 6px;
+  }
+  #status { color: var(--muted); font-size: 12px; padding: 0 20px 12px; min-height: 18px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Turn Annotator</h1>
+  <span class="sub">label who's speaking, export for tools/eval</span>
+  <div class="actions">
+    <label class="filebtn">Load audio<input type="file" id="audioFile" accept="audio/*,.wav,.m4a,.mp3,.caf"></label>
+    <label class="filebtn">Load labels<input type="file" id="labelsFile" accept=".json"></label>
+    <button id="exportLabels" disabled>Export labels.json</button>
+    <button id="exportWav" disabled>Export 16 kHz WAV</button>
+  </div>
+</header>
+
+<div id="stage">
+  <canvas id="wave"></canvas>
+  <canvas id="overlay"></canvas>
+  <div id="empty">Load a recording to begin — any format your browser can play.</div>
+</div>
+
+<div id="transport">
+  <span id="time"><span id="cur">0:00.0</span> <span class="total">/ 0:00.0</span></span>
+  <div class="tgroup">
+    <button id="play" disabled>Play</button>
+    <button id="back" disabled>−2 s</button>
+    <button id="fwd" disabled>+2 s</button>
+  </div>
+  <div class="tgroup">
+    <button id="slower" disabled>Slower</button>
+    <span id="rate">1.0×</span>
+    <button id="faster" disabled>Faster</button>
+  </div>
+  <div class="tgroup">
+    <button id="zoomOut" disabled>Zoom −</button>
+    <button id="zoomIn" disabled>Zoom +</button>
+  </div>
+</div>
+
+<div id="legend">
+  <span><b>space</b>play / pause</span>
+  <span><b>M</b><span class="swatch" style="background:var(--me)"></span>me</span>
+  <span><b>O</b><span class="swatch" style="background:var(--others)"></span>others</span>
+  <span><b>Q</b><span class="swatch" style="background:var(--quiet)"></span>quiet</span>
+  <span><b>U</b><span class="swatch" style="background:var(--unsure)"></span>unsure</span>
+  <span><b>← →</b>seek 2 s (shift: 10 s)</span>
+  <span><b>⌫</b>delete selected marker</span>
+  <span><b>⌘Z</b>undo</span>
+  <span>drag a marker line to move it · click waveform to seek</span>
+</div>
+<div id="status"></div>
+
+<div id="tablewrap">
+  <table>
+    <thead><tr><th>Time</th><th>From here</th><th></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+
+<script>
+"use strict";
+
+const LABELS = ["me", "others", "quiet", "unsure"];
+const COLORS = { me: "#3FD46E", others: "#3D9BFF", quiet: "#59626E", unsure: "#FFA02E" };
+const KEYMAP = { m: "me", o: "others", q: "quiet", u: "unsure" };
+
+const state = {
+  buffer: null,          // AudioBuffer
+  fileName: "recording",
+  recordedAt: null,      // preserved from imported labels
+  events: [],            // [{time, label}] sorted by time
+  selected: -1,          // index into events
+  view: { start: 0, end: 0 },   // seconds visible
+  rate: 1.0,
+  playing: false,
+  source: null,
+  ctxStart: 0,           // audioCtx.currentTime when playback started
+  offset: 0,             // playhead position when paused / at start
+  undoStack: [],
+  dragging: -1,
+};
+
+let audioCtx = null;
+const $ = (id) => document.getElementById(id);
+const wave = $("wave"), overlay = $("overlay");
+const wctx = wave.getContext("2d"), octx = overlay.getContext("2d");
+
+// ---------- Loading ----------
+
+$("audioFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  setStatus("Decoding …");
+  try {
+    ensureCtx();
+    const buf = await audioCtx.decodeAudioData(await file.arrayBuffer());
+    state.buffer = buf;
+    state.fileName = file.name.replace(/\.[^.]+$/, "");
+    state.view = { start: 0, end: buf.duration };
+    state.offset = 0;
+    if (state.events.length === 0) state.events = [{ time: 0, label: "quiet" }];
+    $("empty").style.display = "none";
+    for (const id of ["play","back","fwd","slower","faster","zoomIn","zoomOut","exportLabels","exportWav"])
+      $(id).disabled = false;
+    setStatus(`Loaded ${file.name} — ${fmt(buf.duration)}. Press space, then tap M/O/Q/U as speakers change.`);
+    resize();
+  } catch (err) {
+    setStatus(`Could not decode that file: ${err.message}`);
+  }
+});
+
+$("labelsFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const json = JSON.parse(await file.text());
+    if (!Array.isArray(json.events)) throw new Error("no events array");
+    pushUndo();
+    state.events = json.events
+      .filter((ev) => LABELS.includes(ev.label) && typeof ev.time === "number")
+      .sort((a, b) => a.time - b.time);
+    state.recordedAt = json.recordedAt || null;
+    if (state.events.length === 0 || state.events[0].time > 0)
+      state.events.unshift({ time: 0, label: "quiet" });
+    state.selected = -1;
+    setStatus(`Imported ${state.events.length} labels from ${file.name}.`);
+    renderAll();
+  } catch (err) {
+    setStatus(`Could not read labels: ${err.message}`);
+  }
+});
+
+// ---------- Export ----------
+
+$("exportLabels").addEventListener("click", () => {
+  const doc = {
+    version: 1,
+    sampleRate: 16000,
+    recordedAt: state.recordedAt || new Date().toISOString(),
+    durationSeconds: state.buffer.duration,
+    events: [...state.events].sort((a, b) => a.time - b.time),
+  };
+  download(`${state.fileName}.labels.json`, new Blob([JSON.stringify(doc, null, 2)], { type: "application/json" }));
+  setStatus("labels.json exported.");
+});
+
+$("exportWav").addEventListener("click", async () => {
+  setStatus("Resampling to 16 kHz mono …");
+  const src = state.buffer;
+  const off = new OfflineAudioContext(1, Math.ceil(src.duration * 16000), 16000);
+  const node = off.createBufferSource();
+  node.buffer = src;
+  node.connect(off.destination);
+  node.start();
+  const mono = (await off.startRendering()).getChannelData(0);
+  download(`${state.fileName}.16k.wav`, new Blob([wavBytes(mono, 16000)], { type: "audio/wav" }));
+  setStatus("16 kHz WAV exported — pair it with labels.json for tools/eval/run.sh.");
+});
+
+function wavBytes(samples, sampleRate) {
+  const out = new DataView(new ArrayBuffer(44 + samples.length * 2));
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) out.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, "RIFF"); out.setUint32(4, 36 + samples.length * 2, true); str(8, "WAVE");
+  str(12, "fmt "); out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true);
+  out.setUint32(24, sampleRate, true); out.setUint32(28, sampleRate * 2, true);
+  out.setUint16(32, 2, true); out.setUint16(34, 16, true);
+  str(36, "data"); out.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) {
+    const v = Math.max(-1, Math.min(1, samples[i]));
+    out.setInt16(44 + i * 2, Math.round(v * 32767), true);
+  }
+  return out.buffer;
+}
+
+function download(name, blob) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+// ---------- Playback ----------
+
+function ensureCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === "suspended") audioCtx.resume();
+}
+
+function play() {
+  if (!state.buffer || state.playing) return;
+  ensureCtx();
+  if (state.offset >= state.buffer.duration - 0.05) state.offset = 0;
+  const node = audioCtx.createBufferSource();
+  node.buffer = state.buffer;
+  node.playbackRate.value = state.rate;
+  node.connect(audioCtx.destination);
+  node.start(0, state.offset);
+  node.onended = () => { if (state.source === node) pause(); };
+  state.source = node;
+  state.ctxStart = audioCtx.currentTime;
+  state.playing = true;
+  $("play").textContent = "Pause";
+}
+
+function pause() {
+  if (state.playing) state.offset = playhead();
+  if (state.source) { state.source.onended = null; try { state.source.stop(); } catch (_) {} }
+  state.source = null;
+  state.playing = false;
+  $("play").textContent = "Play";
+}
+
+function playhead() {
+  if (!state.buffer) return 0;
+  const t = state.playing
+    ? state.offset + (audioCtx.currentTime - state.ctxStart) * state.rate
+    : state.offset;
+  return Math.min(t, state.buffer.duration);
+}
+
+function seek(t) {
+  if (!state.buffer) return;
+  const target = Math.max(0, Math.min(t, state.buffer.duration));
+  const wasPlaying = state.playing;
+  pause();
+  state.offset = target;
+  if (wasPlaying) play();
+}
+
+function setRate(r) {
+  state.rate = Math.max(0.5, Math.min(2, Math.round(r * 100) / 100));
+  $("rate").textContent = `${state.rate.toFixed(2).replace(/0$/, "")}×`;
+  if (state.playing) { const t = playhead(); pause(); state.offset = t; play(); }
+}
+
+$("play").addEventListener("click", () => (state.playing ? pause() : play()));
+$("back").addEventListener("click", () => seek(playhead() - 2));
+$("fwd").addEventListener("click", () => seek(playhead() + 2));
+$("slower").addEventListener("click", () => setRate(state.rate - 0.25));
+$("faster").addEventListener("click", () => setRate(state.rate + 0.25));
+$("zoomIn").addEventListener("click", () => zoom(0.5));
+$("zoomOut").addEventListener("click", () => zoom(2));
+
+function zoom(factor) {
+  const v = state.view;
+  const center = playhead();
+  const span = Math.min(state.buffer.duration, Math.max(2, (v.end - v.start) * factor));
+  v.start = Math.max(0, center - span / 2);
+  v.end = Math.min(state.buffer.duration, v.start + span);
+  v.start = Math.max(0, v.end - span);
+  drawWave();
+}
+
+// ---------- Annotation ----------
+
+function pushUndo() {
+  state.undoStack.push(JSON.stringify(state.events));
+  if (state.undoStack.length > 100) state.undoStack.shift();
+}
+
+function addMarker(label) {
+  if (!state.buffer) return;
+  const t = playhead();
+  pushUndo();
+  // Replace a marker within 0.3 s instead of stacking duplicates.
+  const near = state.events.findIndex((ev) => ev.time > 0.001 && Math.abs(ev.time - t) < 0.3);
+  if (near >= 0) state.events.splice(near, 1);
+  state.events.push({ time: Math.round(t * 10000) / 10000, label });
+  state.events.sort((a, b) => a.time - b.time);
+  state.selected = state.events.findIndex((ev) => Math.abs(ev.time - t) < 0.001);
+  renderAll();
+}
+
+function deleteSelected() {
+  if (state.selected <= 0) return;   // never delete the t=0 anchor
+  pushUndo();
+  state.events.splice(state.selected, 1);
+  state.selected = -1;
+  renderAll();
+}
+
+function undo() {
+  const prev = state.undoStack.pop();
+  if (!prev) return;
+  state.events = JSON.parse(prev);
+  state.selected = -1;
+  renderAll();
+  setStatus("Undone.");
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT") return;
+  const k = e.key.toLowerCase();
+  if ((e.metaKey || e.ctrlKey) && k === "z") { e.preventDefault(); undo(); return; }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (k === " ") { e.preventDefault(); state.playing ? pause() : play(); }
+  else if (KEYMAP[k]) addMarker(KEYMAP[k]);
+  else if (k === "arrowleft") seek(playhead() - (e.shiftKey ? 10 : 2));
+  else if (k === "arrowright") seek(playhead() + (e.shiftKey ? 10 : 2));
+  else if (k === "backspace" || k === "delete") { e.preventDefault(); deleteSelected(); }
+  else if (k === "=" || k === "+") zoom(0.5);
+  else if (k === "-") zoom(2);
+});
+
+// ---------- Waveform + overlay rendering ----------
+
+function xForTime(t) {
+  const v = state.view;
+  return ((t - v.start) / (v.end - v.start)) * overlay.width / devicePixelRatio;
+}
+function timeForX(x) {
+  const v = state.view;
+  return v.start + (x / (overlay.width / devicePixelRatio)) * (v.end - v.start);
+}
+function labelAt(t) {
+  let current = "quiet";
+  for (const ev of state.events) { if (ev.time <= t) current = ev.label; else break; }
+  return current;
+}
+
+function drawWave() {
+  const W = wave.width, H = wave.height;
+  wctx.clearRect(0, 0, W, H);
+  if (!state.buffer) return;
+  const data = state.buffer.getChannelData(0);
+  const v = state.view;
+  const startSample = Math.floor(v.start * state.buffer.sampleRate);
+  const endSample = Math.min(data.length, Math.ceil(v.end * state.buffer.sampleRate));
+  const perPx = Math.max(1, Math.floor((endSample - startSample) / W));
+  const mid = H / 2;
+
+  for (let x = 0; x < W; x++) {
+    const s0 = startSample + x * perPx;
+    if (s0 >= endSample) break;
+    let lo = 1, hi = -1;
+    for (let i = s0; i < Math.min(s0 + perPx, endSample); i++) {
+      const s = data[i];
+      if (s < lo) lo = s;
+      if (s > hi) hi = s;
+    }
+    const t = v.start + ((x / W) * (v.end - v.start));
+    wctx.fillStyle = COLORS[labelAt(t)] || "#3A4450";
+    const y0 = mid + lo * mid * 0.92;
+    const y1 = mid + hi * mid * 0.92;
+    wctx.fillRect(x, Math.min(y0, y1), 1, Math.max(1, Math.abs(y1 - y0)));
+  }
+}
+
+function drawOverlay() {
+  const W = overlay.width / devicePixelRatio, H = overlay.height / devicePixelRatio;
+  octx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  octx.clearRect(0, 0, W, H);
+  if (!state.buffer) return;
+
+  // Segment markers.
+  state.events.forEach((ev, i) => {
+    const x = xForTime(ev.time);
+    if (x < -4 || x > W + 4) return;
+    octx.strokeStyle = i === state.selected ? "#FFFFFF" : (COLORS[ev.label] + "CC");
+    octx.lineWidth = i === state.selected ? 2 : 1;
+    octx.beginPath(); octx.moveTo(x, 0); octx.lineTo(x, H); octx.stroke();
+    octx.fillStyle = COLORS[ev.label];
+    octx.fillRect(x - 8, 0, 16, 14);
+    octx.fillStyle = "#0F1317";
+    octx.font = "600 10px ui-monospace, Menlo, monospace";
+    octx.textAlign = "center";
+    octx.fillText(ev.label[0].toUpperCase(), x, 10.5);
+  });
+
+  // Playhead.
+  const px = xForTime(playhead());
+  octx.strokeStyle = "#F4F7FA";
+  octx.lineWidth = 1.5;
+  octx.beginPath(); octx.moveTo(px, 0); octx.lineTo(px, H); octx.stroke();
+}
+
+// Overlay interactions: drag markers, click to seek.
+overlay.addEventListener("mousedown", (e) => {
+  if (!state.buffer) return;
+  const x = e.offsetX;
+  const hit = state.events.findIndex((ev, i) => i > 0 && Math.abs(xForTime(ev.time) - x) < 6);
+  if (hit > 0) {
+    state.selected = hit;
+    state.dragging = hit;
+    pushUndo();
+    renderTable();
+  } else {
+    seek(timeForX(x));
+  }
+});
+overlay.addEventListener("mousemove", (e) => {
+  if (state.dragging > 0) {
+    state.events[state.dragging].time = Math.max(0.01, Math.min(state.buffer.duration, timeForX(e.offsetX)));
+    renderAll(false);
+  }
+});
+document.addEventListener("mouseup", () => {
+  if (state.dragging > 0) {
+    state.events.sort((a, b) => a.time - b.time);
+    state.dragging = -1;
+    renderAll();
+  }
+});
+
+// ---------- Table + status ----------
+
+function renderTable() {
+  const rows = $("rows");
+  rows.innerHTML = "";
+  state.events.forEach((ev, i) => {
+    const tr = document.createElement("tr");
+    if (i === state.selected) tr.className = "selected";
+
+    const tdT = document.createElement("td");
+    tdT.className = "t";
+    tdT.textContent = fmt(ev.time);
+    tdT.title = "Jump here";
+    tdT.addEventListener("click", () => { state.selected = i; seek(ev.time); renderAll(); });
+    tr.appendChild(tdT);
+
+    const tdL = document.createElement("td");
+    const sel = document.createElement("select");
+    for (const l of LABELS) {
+      const opt = document.createElement("option");
+      opt.value = l; opt.textContent = l; opt.selected = l === ev.label;
+      sel.appendChild(opt);
+    }
+    sel.addEventListener("change", () => { pushUndo(); ev.label = sel.value; renderAll(); });
+    tdL.appendChild(sel);
+    tr.appendChild(tdL);
+
+    const tdX = document.createElement("td");
+    if (i > 0) {
+      const del = document.createElement("button");
+      del.className = "del"; del.textContent = "✕"; del.title = "Delete marker";
+      del.addEventListener("click", () => { state.selected = i; deleteSelected(); });
+      tdX.appendChild(del);
+    }
+    tr.appendChild(tdX);
+    rows.appendChild(tr);
+  });
+}
+
+function setStatus(msg) { $("status").textContent = msg; }
+function fmt(t) {
+  const m = Math.floor(t / 60), s = t - m * 60;
+  return `${m}:${s.toFixed(1).padStart(4, "0")}`;
+}
+
+function renderAll(withTable = true) {
+  drawWave();
+  drawOverlay();
+  if (withTable) renderTable();
+}
+
+// ---------- Layout / animation loop ----------
+
+function resize() {
+  const rect = $("stage").getBoundingClientRect();
+  wave.width = Math.floor(rect.width);   // waveform renders at 1x for speed
+  wave.height = 240;
+  overlay.width = Math.floor(rect.width * devicePixelRatio);
+  overlay.height = 240 * devicePixelRatio;
+  overlay.style.height = "240px";
+  renderAll();
+}
+window.addEventListener("resize", resize);
+
+function tick() {
+  if (state.buffer) {
+    const t = playhead();
+    $("cur").textContent = fmt(t);
+    document.querySelector("#time .total").textContent = `/ ${fmt(state.buffer.duration)}`;
+    // Follow the playhead when it walks off the visible window.
+    const v = state.view;
+    if (state.playing && t > v.end - (v.end - v.start) * 0.05) {
+      const span = v.end - v.start;
+      v.start = Math.min(Math.max(0, state.buffer.duration - span), t - span * 0.1);
+      v.end = v.start + span;
+      drawWave();
+    }
+    drawOverlay();
+  }
+  requestAnimationFrame(tick);
+}
+resize();
+tick();
+</script>
+</body>
+</html>
