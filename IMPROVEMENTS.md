@@ -12,6 +12,11 @@ findings from field tests at the bottom.
       on the audio clock. Sessions save to `Documents/GroundTruth/<timestamp>/`
       (`audio.wav` + `labels.json`), shareable from the app and visible in
       Files/Finder (`UIFileSharingEnabled`).
+      Offline annotator SHIPPED as well: `tools/annotate/annotate.html` — a
+      zero-install browser tool to label natural recordings after the fact
+      (waveform painted in label colors, keyboard-driven markers, drag to
+      nudge, exports harness-compatible `labels.json` + 16 kHz WAV from any
+      audio format). Replaces stilted live-tapping for realistic sessions.
       Replay harness SHIPPED too: `tools/eval/run.sh <audio.wav> <labels.json>`
       compiles the real pipeline sources (VoiceCore + NoiseFloor/VoicedTrim +
       neural embedder) into a macOS binary, enrolls from the first long "me"
