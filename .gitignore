@@ -57,3 +57,4 @@ DerivedData/
 ios/AmITalkingTooMuch.xcodeproj/
 ios/App/Info.plist
 ios/VoiceCore/.swiftpm/
+tools/eval/data/
