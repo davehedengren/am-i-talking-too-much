@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("showDiagnosticsOnTracker") private var showDiagnostics = false
 
     var body: some View {
         NavigationStack {
@@ -54,6 +55,7 @@ struct SettingsView: View {
                     Text("Record a conversation with who-is-speaking labels to tune the voice matcher. Unlike tracking, this saves raw audio on this phone until you delete it.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                    Toggle("Show per-chunk log on tracker", isOn: $showDiagnostics)
                 } header: {
                     Text("Diagnostics")
                 }

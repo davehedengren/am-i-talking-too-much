@@ -98,6 +98,21 @@ findings from field tests at the bottom.
       so `swift test` covers it headlessly; or add an app unit-test target to
       `project.yml`.
 
+## 4b. Design ("quiet instrument" — phases 1–2 shipped 2026-07-21)
+
+- [x] Token system (`Theme.swift`): dark-first indigo, candlelight gold (you) /
+      tide teal (others), coach-calm bands, SF Rounded metrics, capsule button
+      styles. Identity seeded from the app icon.
+- [x] Signature: `AirBalanceGauge` — duotone dial + breathing mic halo
+      (isolated observable, Reduce Motion respected); tracker rebuilt around
+      Ready/Listening states; debug log demoted behind a Settings toggle;
+      history rows got gold/teal share-bars + an average-airtime header;
+      coach copy ("Lots of airtime — try a question?").
+- [ ] Phase 3: session-detail chart redesign (load the dataviz skill and run
+      its palette validation), calibration screen "learning your voice"
+      waveform moment, save-sheet polish with mini gauge, band-crossing haptic
+      tick, tuned light-mode variant.
+
 ## 5. Product ideas
 
 - [x] **On-phone haptic nudge** (first cut) — warning haptic when your share

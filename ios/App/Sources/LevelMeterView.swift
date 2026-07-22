@@ -8,14 +8,14 @@ struct LevelMeterView: View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(.quaternary)
+                    .fill(Theme.elevated)
                 Capsule()
-                    .fill(level > 0.85 ? Color.red : Color.accentColor)
+                    .fill(level > 0.85 ? Theme.coral : Theme.you)
                     .frame(width: max(geometry.size.width * level, 6))
                     .animation(.linear(duration: 0.1), value: level)
             }
         }
-        .frame(height: 12)
+        .frame(height: 10)
         .accessibilityLabel("Microphone level")
         .accessibilityValue("\(Int(level * 100)) percent")
     }
