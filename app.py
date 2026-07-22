@@ -106,7 +106,7 @@ def init_session_state():
     if 'speaker_use_embedding' not in st.session_state:
         st.session_state.speaker_use_embedding = st.session_state.speaker_embedding is not None
     if 'speaker_similarity_threshold' not in st.session_state:
-        st.session_state.speaker_similarity_threshold = 0.65
+        st.session_state.speaker_similarity_threshold = 0.45
     if 'debug_logs' not in st.session_state:
         st.session_state.debug_logs = []
     if 'voice_profile' not in st.session_state:
@@ -259,7 +259,7 @@ def render_calibration():
                                         config=config,
                                         auth_token=HUGGING_FACE_API_KEY
                                     )
-                                embedding = st.session_state.speaker_embedder.embedding_from_audio(
+                                embedding = st.session_state.speaker_embedder.enroll_from_audio(
                                     st.session_state.calibration_audio,
                                     SAMPLE_RATE
                                 )
@@ -267,7 +267,7 @@ def render_calibration():
                                 save_embedding(embedding, str(SPEAKER_EMBEDDING_PATH))
                             except Exception as e:
                                 st.session_state.speaker_embedding = None
-                                st.session_state.speaker_embedding_error = f"Speaker embedding failed: {str(e)[:80]}"
+                                st.session_state.speaker_embedding_error = f"Speaker embedding failed: {e}"
                         st.session_state.calibration_audio = None
                         st.rerun()
 
@@ -368,7 +368,7 @@ def render_tracking():
 
         # Process audio in chunks
         chunk_duration = 2.0
-        SPEECH_THRESHOLD = 0.005  # Lowered threshold for speech detection
+        SPEECH_THRESHOLD = 0.0005  # Low threshold to support Bluetooth mics
 
         with st.spinner(""):
             audio = record_audio(chunk_duration, SAMPLE_RATE, st.session_state.selected_device)
@@ -408,7 +408,7 @@ def render_tracking():
                             match_method = "embedding"
                             used_embedding = True
                     except Exception as e:
-                        st.session_state.speaker_embedding_error = f"Speaker embedding error: {str(e)[:80]}"
+                        st.session_state.speaker_embedding_error = f"Speaker embedding error: {e}"
                         st.session_state.speaker_embedder = None
 
                 if not used_embedding:

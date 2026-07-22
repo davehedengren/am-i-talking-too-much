@@ -222,9 +222,9 @@ def match_voice(audio_segment: np.ndarray, profile: VoiceProfile,
     Returns:
         Tuple of (is_match, confidence_score)
     """
-    # Skip very quiet segments
+    # Skip very quiet segments (threshold low enough for Bluetooth mics)
     rms = np.sqrt(np.mean(audio_segment ** 2))
-    if rms < 0.01:
+    if rms < 0.0005:
         return False, 0.0
 
     # Extract features from segment
