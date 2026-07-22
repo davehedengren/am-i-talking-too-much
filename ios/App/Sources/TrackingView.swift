@@ -7,60 +7,57 @@ struct TrackingView: View {
     @StateObject private var viewModel: TrackerViewModel
     @State private var showSettings = false
     @State private var pendingDraft: SessionDraft?
+    @AppStorage("showDiagnosticsOnTracker") private var showDiagnostics = false
 
     @MainActor
     init() {
         _viewModel = StateObject(wrappedValue: TrackerViewModel(capture: .shared))
     }
 
-    /// Same feedback bands as the Python app.
-    private var percentageColor: Color {
-        switch viewModel.percentage {
-        case ...40: return .green
-        case ...55: return .yellow
-        default: return .red
-        }
-    }
-
     var body: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                percentageHeader
+        ZStack {
+            Theme.bg.ignoresSafeArea()
 
-                ProgressView(value: min(viewModel.percentage / 100, 1))
-                    .tint(percentageColor)
+            ScrollView {
+                VStack(spacing: 26) {
+                    AirBalanceGauge(
+                        percentage: viewModel.percentage,
+                        hasSpeech: viewModel.totalSeconds > 0,
+                        liveLevel: viewModel.isTracking ? viewModel.liveLevel : nil
+                    )
+                    .padding(.top, 6)
 
-                if !viewModel.percentageHistory.isEmpty {
-                    historyChart
-                }
-
-                stats
-
-                if let error = viewModel.errorMessage {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                }
-
-                controls
-
-                if !viewModel.isTracking {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Audio Level")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        LiveLevelMeter(level: viewModel.liveLevel)
+                    if viewModel.isTracking {
+                        listeningStatus
+                    } else if viewModel.totalSeconds > 0 {
+                        totalsLine
                     }
-                } else {
-                    liveFeedback
-                }
 
-                debugSection
+                    if let error = viewModel.errorMessage {
+                        Label(error, systemImage: "exclamationmark.triangle")
+                            .font(.footnote)
+                            .foregroundStyle(Theme.coral)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    controls
+
+                    if !viewModel.isTracking {
+                        micCheck
+                    } else if !viewModel.percentageHistory.isEmpty {
+                        liveChart
+                    }
+
+                    if showDiagnostics {
+                        diagnostics
+                    }
+                }
+                .padding(20)
             }
-            .padding()
         }
-        .navigationTitle("Conversation Tracker")
+        .navigationTitle("Conversation")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(Theme.bg, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 NavigationLink {
@@ -116,83 +113,71 @@ struct TrackingView: View {
         }
     }
 
-    /// Live proof the pipeline is working: audio-reactive meter + the last
-    /// chunk's classification.
-    private var liveFeedback: some View {
-        let matcherName = (model.useNeuralMatching && model.neuralProfile != nil) ? "Neural" : "Classic"
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("Listening (\(matcherName))", systemImage: "mic.fill")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Spacer()
+    // MARK: - Listening state
+
+    private var listeningStatus: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                let matcherName = (model.useNeuralMatching && model.neuralProfile != nil) ? "Neural" : "Classic"
+                Label("Listening · \(matcherName)", systemImage: "mic.fill")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.muted)
                 outcomeChip
             }
-            LiveLevelMeter(level: viewModel.liveLevel)
+            totalsLine
+            if viewModel.percentage > 55, viewModel.totalSeconds >= 60 {
+                Text("Lots of airtime — try a question?")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.coral)
+            }
+        }
+    }
+
+    private var totalsLine: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 14) {
+                HStack(spacing: 6) {
+                    Circle().fill(Theme.you).frame(width: 7, height: 7)
+                    Text("You \(mmss(viewModel.userSeconds))")
+                }
+                HStack(spacing: 6) {
+                    Circle().fill(Theme.others).frame(width: 7, height: 7)
+                    Text("Others \(mmss(viewModel.totalSeconds - viewModel.userSeconds))")
+                }
+            }
+            .font(Theme.metric(15, weight: .medium))
+            .monospacedDigit()
+            .foregroundStyle(Theme.text)
+            Text("Silence isn't counted.")
+                .font(.caption2)
+                .foregroundStyle(Theme.muted)
         }
     }
 
     @ViewBuilder
     private var outcomeChip: some View {
         let (text, color): (String, Color) = switch viewModel.lastOutcome {
-        case .you: ("You", .green)
-        case .others: ("Others", .blue)
-        case .silence: ("quiet", .gray)
-        case nil: ("…", .gray)
+        case .you: ("You", Theme.you)
+        case .others: ("Others", Theme.others)
+        case .silence: ("quiet", Theme.muted)
+        case nil: ("…", Theme.muted)
         }
         HStack(spacing: 6) {
-            Circle().fill(color).frame(width: 8, height: 8)
+            Circle().fill(color).frame(width: 7, height: 7)
             Text(text)
-                .font(.caption.weight(.semibold))
+                .font(Theme.metric(12, weight: .semibold))
                 .foregroundStyle(color)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-        .background(color.opacity(0.12), in: Capsule())
+        .padding(.vertical, 5)
+        .background(color.opacity(0.14), in: Capsule())
         .animation(.easeInOut(duration: 0.25), value: viewModel.lastOutcome)
     }
 
-    private var percentageHeader: some View {
-        VStack(spacing: 4) {
-            Text("\(Int(viewModel.percentage.rounded()))%")
-                .font(.system(size: 72, weight: .bold, design: .rounded))
-                .foregroundStyle(percentageColor)
-                .contentTransition(.numericText())
-                .animation(.default, value: Int(viewModel.percentage.rounded()))
-            Text("Your speaking time")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.top, 8)
-    }
-
-    private var historyChart: some View {
-        Chart(Array(viewModel.percentageHistory.enumerated()), id: \.offset) { index, value in
-            LineMark(
-                x: .value("Chunk", index),
-                y: .value("Your Speaking %", value)
-            )
-            .interpolationMethod(.monotone)
-        }
-        .chartYScale(domain: 0...100)
-        .frame(height: 160)
-    }
-
-    private var stats: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 12) {
-                StatTile(title: "You spoke", value: String(format: "%.1fs", viewModel.userSeconds))
-                StatTile(title: "Others spoke", value: String(format: "%.1fs", viewModel.totalSeconds - viewModel.userSeconds))
-                StatTile(title: "Total speech", value: String(format: "%.1fs", viewModel.totalSeconds))
-            }
-            Text("Silence is not counted — only time when someone is speaking")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-    }
+    // MARK: - Controls
 
     private var controls: some View {
-        HStack(spacing: 12) {
+        VStack(spacing: 10) {
             if viewModel.isTracking {
                 Button {
                     viewModel.stopTracking()
@@ -200,32 +185,81 @@ struct TrackingView: View {
                     // saving was captured (no speech), so just stop.
                     pendingDraft = viewModel.makeDraft()
                 } label: {
-                    Label("Stop Tracking", systemImage: "stop.fill")
-                        .frame(maxWidth: .infinity)
+                    Label("Stop", systemImage: "stop.fill")
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
+                .buttonStyle(QuietButtonStyle())
             } else {
                 Button {
                     viewModel.startTracking()
                 } label: {
-                    Label("Start Tracking", systemImage: "play.fill")
-                        .frame(maxWidth: .infinity)
+                    Label("Start listening", systemImage: "mic.fill")
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-            }
+                .buttonStyle(GoldButtonStyle())
 
-            Button {
-                viewModel.stopTracking()
-                viewModel.reset()
-            } label: {
-                Label("Reset", systemImage: "arrow.counterclockwise")
-                    .frame(maxWidth: .infinity)
+                if viewModel.totalSeconds > 0 {
+                    Button("Clear this session") {
+                        viewModel.reset()
+                    }
+                    .font(.footnote)
+                    .foregroundStyle(Theme.muted)
+                }
             }
-            .buttonStyle(.bordered)
-            .controlSize(.large)
         }
+    }
+
+    private var micCheck: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Mic check — speak and watch the bar")
+                .font(.footnote)
+                .foregroundStyle(Theme.muted)
+            LiveLevelMeter(level: viewModel.liveLevel)
+        }
+    }
+
+    private var liveChart: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("This conversation")
+                .font(.footnote)
+                .foregroundStyle(Theme.muted)
+            Chart(Array(viewModel.percentageHistory.enumerated()), id: \.offset) { index, value in
+                LineMark(
+                    x: .value("Chunk", index),
+                    y: .value("Your share", value)
+                )
+                .foregroundStyle(Theme.you)
+                .interpolationMethod(.monotone)
+                RuleMark(y: .value("Even", 50))
+                    .foregroundStyle(Theme.muted.opacity(0.35))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+            }
+            .chartYScale(domain: 0...100)
+            .chartXAxis(.hidden)
+            .frame(height: 110)
+        }
+    }
+
+    // MARK: - Diagnostics (opt-in from Settings)
+
+    private var diagnostics: some View {
+        DisclosureGroup("Diagnostics") {
+            if viewModel.debugLog.isEmpty {
+                Text("No chunks yet. Start listening.")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(Theme.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(Array(viewModel.debugLog.reversed().enumerated()), id: \.offset) { _, entry in
+                        Text(entry)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(Theme.muted)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .font(.subheadline)
+        .foregroundStyle(Theme.text)
     }
 
     /// Observes only the live level, so ~10 Hz meter updates re-render this
@@ -238,24 +272,8 @@ struct TrackingView: View {
         }
     }
 
-    private var debugSection: some View {
-        DisclosureGroup("Debug Log") {
-            if viewModel.debugLog.isEmpty {
-                Text("No logs yet. Start tracking.")
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(Array(viewModel.debugLog.reversed().enumerated()), id: \.offset) { _, entry in
-                        Text(entry)
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .font(.subheadline)
+    private func mmss(_ seconds: Double) -> String {
+        let total = Int(seconds.rounded())
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }

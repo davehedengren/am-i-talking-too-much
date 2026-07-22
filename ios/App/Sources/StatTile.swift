@@ -8,13 +8,16 @@ struct StatTile: View {
     var body: some View {
         VStack(spacing: 4) {
             Text(value)
-                .font(.headline.monospacedDigit())
+                .font(Theme.metric(17))
+                .monospacedDigit()
+                .foregroundStyle(Theme.text)
             Text(title)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.muted)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 10)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        .padding(.vertical, 12)
+        .background(Theme.elevated, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.line))
     }
 }

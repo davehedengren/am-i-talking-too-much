@@ -10,6 +10,10 @@ struct AmITalkingTooMuchApp: App {
             RootView()
                 .environmentObject(model)
                 .environmentObject(history)
+                // The "quiet instrument" identity: dark-first (discreet on a
+                // dinner table), candlelight-gold accent throughout.
+                .preferredColorScheme(.dark)
+                .tint(Theme.you)
         }
     }
 }
